@@ -3,6 +3,8 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { BottomNav } from "@/components/BottomNav";
 import { ServiceWorkerRegistrar } from "@/components/ServiceWorkerRegistrar";
+import { AppGate } from "@/components/AppGate";
+import { AutoBackup } from "@/components/AutoBackup";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -56,8 +58,11 @@ export default function RootLayout({
       </head>
       <body className="min-h-full bg-[#08090A] text-[#F2F4F3]">
         <ServiceWorkerRegistrar />
-        {children}
-        <BottomNav />
+        <AppGate>
+          <AutoBackup />
+          {children}
+          <BottomNav />
+        </AppGate>
       </body>
     </html>
   );

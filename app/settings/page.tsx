@@ -31,7 +31,9 @@ import {
   Trash2,
   Check,
   AlertTriangle,
+  Lock,
 } from "lucide-react";
+import { isPinSet, setPin as savePin, removePin } from "@/lib/lock";
 
 type Status = { kind: "idle" | "ok" | "err" | "busy"; msg?: string };
 
@@ -41,6 +43,39 @@ export default function SettingsPage() {
   const [sync, setSync] = useState<Status>({ kind: "idle" });
   const [io, setIo] = useState<Status>({ kind: "idle" });
   const [resetArmed, setResetArmed] = useState(false);
+  const [pinOn, setPinOn] = useState(false);
+  const [pinEntry, setPinEntry] = useState("");
+  const [pinConfirm, setPinConfirm] = useState("");
+  const [pinMode, setPinMode] = useState<"idle" | "setting">("idle");
+  const [pinMsg, setPinMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    isPinSet().then(setPinOn);
+  }, []);
+
+  const handleSetPin = async () => {
+    setPinMsg(null);
+    if (!/^\d{4,6}$/.test(pinEntry)) {
+      setPinMsg("PIN must be 4–6 digits.");
+      return;
+    }
+    if (pinEntry !== pinConfirm) {
+      setPinMsg("PINs don't match.");
+      return;
+    }
+    await savePin(pinEntry);
+    setPinOn(true);
+    setPinMode("idle");
+    setPinEntry("");
+    setPinConfirm("");
+    setPinMsg("PIN set. The app will lock when idle.");
+  };
+
+  const handleRemovePin = async () => {
+    await removePin();
+    setPinOn(false);
+    setPinMsg("PIN removed.");
+  };
 
   const counts = useLiveQuery(async () => ({
     sessions: await db.workoutSessions.count(),
@@ -144,6 +179,92 @@ export default function SettingsPage() {
                 onBlur={(e) => setSetting("name", e.target.value.trim())}
                 className="bg-[#08090A] border-[#24262C]"
               />
+            </CardContent>
+          </Card>
+        </section>
+
+        {/* Security */}
+        <section className="flex flex-col gap-3">
+          <p className="text-xs font-semibold text-[#9BA0A6] uppercase tracking-wider px-1">
+            Security
+          </p>
+          <Card className="bg-[#121316] border-[#24262C]">
+            <CardContent className="p-4 flex flex-col gap-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Lock className="w-4 h-4 text-[#9BA0A6]" />
+                  <span className="text-sm font-medium">App lock (PIN)</span>
+                </div>
+                {pinOn ? (
+                  <span className="text-xs font-bold text-[#36D399]">On</span>
+                ) : (
+                  <span className="text-xs font-bold text-[#5A5F66]">Off</span>
+                )}
+              </div>
+
+              {pinMode === "setting" ? (
+                <div className="flex flex-col gap-2">
+                  <Input
+                    type="password"
+                    inputMode="numeric"
+                    maxLength={6}
+                    placeholder="New PIN (4–6 digits)"
+                    value={pinEntry}
+                    onChange={(e) => setPinEntry(e.target.value.replace(/\D/g, ""))}
+                    className="bg-[#08090A] border-[#24262C]"
+                  />
+                  <Input
+                    type="password"
+                    inputMode="numeric"
+                    maxLength={6}
+                    placeholder="Confirm PIN"
+                    value={pinConfirm}
+                    onChange={(e) => setPinConfirm(e.target.value.replace(/\D/g, ""))}
+                    className="bg-[#08090A] border-[#24262C]"
+                  />
+                  <div className="flex gap-2">
+                    <Button className="flex-1" onClick={handleSetPin}>
+                      Save PIN
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      className="flex-1"
+                      onClick={() => {
+                        setPinMode("idle");
+                        setPinEntry("");
+                        setPinConfirm("");
+                        setPinMsg(null);
+                      }}
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex gap-2">
+                  <Button
+                    variant="secondary"
+                    className="flex-1"
+                    onClick={() => {
+                      setPinMode("setting");
+                      setPinMsg(null);
+                    }}
+                  >
+                    {pinOn ? "Change PIN" : "Set a PIN"}
+                  </Button>
+                  {pinOn && (
+                    <Button variant="ghost" className="flex-1" onClick={handleRemovePin}>
+                      Remove
+                    </Button>
+                  )}
+                </div>
+              )}
+
+              {pinMsg && <p className="text-xs text-[#9BA0A6]">{pinMsg}</p>}
+              <p className="text-[11px] text-[#5A5F66]">
+                Locks the app after ~5 minutes idle. This gates access on this
+                device; your private data repo protects the backup itself.
+              </p>
             </CardContent>
           </Card>
         </section>
