@@ -1,0 +1,99 @@
+@import "tailwindcss";
+
+/*
+  PhysiqueOS — "Carbon & Citrus"
+  Dark instrument-panel theme. True near-black base, layered surfaces,
+  hairline borders, and a single decisive citrus-lime accent. The data
+  (large tabular numerics) is the hero.
+*/
+
+@layer base {
+  :root {
+    --background: 220 11% 4%;        /* #08090A */
+    --foreground: 150 6% 95%;        /* #F2F4F3 */
+    --card: 222 9% 8%;               /* #121316 */
+    --card-foreground: 150 6% 95%;
+    --popover: 222 9% 8%;
+    --popover-foreground: 150 6% 95%;
+
+    /* Accent: citrus lime. Dark text sits on it for contrast. */
+    --primary: 73 87% 60%;           /* #C7F23E */
+    --primary-foreground: 220 20% 6%;/* near-black text on lime */
+
+    --secondary: 222 8% 12%;         /* #1B1D22 */
+    --secondary-foreground: 150 6% 95%;
+    --muted: 222 8% 12%;
+    --muted-foreground: 215 5% 63%;  /* #9BA0A6 */
+    --accent: 222 8% 12%;
+    --accent-foreground: 150 6% 95%;
+    --destructive: 358 86% 64%;      /* #F2555A */
+    --destructive-foreground: 150 6% 97%;
+    --border: 222 9% 16%;            /* #24262C */
+    --input: 222 9% 16%;
+    --ring: 73 87% 60%;
+    --radius: 0.875rem;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-[#24262C];
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%; /* stop iOS Safari auto-zooming text */
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-[#08090A] text-[#F2F4F3];
+    font-feature-settings: "tnum", "ss01";
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-y: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* Inputs at >=16px so mobile Safari never zooms on focus */
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+
+  .safe-bottom {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  .safe-top {
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+}
+
+@layer utilities {
+  .glow-accent {
+    box-shadow: 0 0 0 1px rgba(199, 242, 62, 0.25),
+      0 8px 30px -8px rgba(199, 242, 62, 0.18);
+  }
+
+  .rule-accent {
+    background-image: linear-gradient(
+      to right,
+      rgba(199, 242, 62, 0.7),
+      rgba(199, 242, 62, 0)
+    );
+  }
+
+  .tnums {
+    font-variant-numeric: tabular-nums;
+  }
+
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .animate-fade-up { animation: fadeUp 0.28s ease-out both; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .animate-fade-up { animation: none; }
+    html { scroll-behavior: auto; }
+  }
+}
