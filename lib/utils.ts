@@ -12,16 +12,34 @@ export function generateId(): string {
 }
 
 export function todayISO(): string {
-  return new Date().toISOString().split("T")[0]!;
+  // Local calendar date (NOT UTC). Using toISOString() here caused entries to
+  // log as tomorrow/yesterday in zones far from UTC (e.g. Vancouver after ~5pm).
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 }
 
 export function formatDateShort(dateStr: string): string {
-  const d = new Date(dateStr);
+  // Parse a bare YYYY-MM-DD as a LOCAL date. `new Date("2026-06-17")` parses as
+  // UTC midnight, which renders as the previous day in negative-offset zones.
+  const d = parseLocalDate(dateStr);
   return d.toLocaleDateString("en-US", {
     weekday: "short",
     month: "short",
     day: "numeric",
   });
+}
+
+// Parse a date string as local time. Handles bare "YYYY-MM-DD" (treated as
+// local midnight) and full ISO timestamps (passed through).
+export function parseLocalDate(dateStr: string): Date {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr);
+  if (m) {
+    return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  }
+  return new Date(dateStr);
 }
 
 export function formatDuration(seconds: number): string {

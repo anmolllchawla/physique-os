@@ -7,9 +7,34 @@ import { db, type ProgressPhoto } from "@/lib/db";
 import { generateId, todayISO, formatDateShort } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { ArrowLeft, Camera, Trash2, X } from "lucide-react";
+import { ArrowLeft, Camera, Trash2, X, Download } from "lucide-react";
 
 const POSES: ProgressPhoto["pose"][] = ["front", "side", "back", "other"];
+
+// Group photos into [date, items] pairs, newest date first.
+function groupByDate(photos: ProgressPhoto[]): [string, ProgressPhoto[]][] {
+  const map = new Map<string, ProgressPhoto[]>();
+  for (const p of photos) {
+    const arr = map.get(p.date) ?? [];
+    arr.push(p);
+    map.set(p.date, arr);
+  }
+  return [...map.entries()].sort((a, b) => b[0].localeCompare(a[0]));
+}
+
+// Download all photos for a date as individual files named by date + pose.
+// (A web app can't write a real folder to the device, so each file is named
+// "YYYY-MM-DD-pose-N.jpg" — they group together in your downloads/Files.)
+function exportDate(date: string, items: ProgressPhoto[]) {
+  items.forEach((ph, i) => {
+    const a = document.createElement("a");
+    a.href = ph.data_url;
+    a.download = `${date}-${ph.pose}${items.length > 1 ? `-${i + 1}` : ""}.jpg`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  });
+}
 
 // Downscale an image file to a JPEG data URL (max 1080px long edge) so photos
 // stay small enough for IndexedDB and the GitHub JSON backup.
@@ -134,19 +159,40 @@ export default function PhotosPage() {
         )}
 
         {photos && photos.length > 0 && (
-          <div className="grid grid-cols-3 gap-2">
-            {photos.map((ph) => (
-              <button
-                key={ph.id}
-                onClick={() => setViewer(ph)}
-                className="relative aspect-[3/4] rounded-lg overflow-hidden border border-[#24262C] bg-[#121316]"
-              >
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={ph.data_url} alt={`${ph.pose} ${ph.date}`} className="w-full h-full object-cover" />
-                <span className="absolute bottom-0 inset-x-0 bg-black/60 text-[10px] py-0.5 text-center font-semibold uppercase tracking-wide">
-                  {ph.pose}
-                </span>
-              </button>
+          <div className="flex flex-col gap-5">
+            {groupByDate(photos).map(([date, items]) => (
+              <div key={date}>
+                <div className="flex items-center justify-between mb-2 px-0.5">
+                  <p className="text-[11px] font-bold text-[#9BA0A6] uppercase tracking-[0.12em]">
+                    {formatDateShort(date)}
+                  </p>
+                  <button
+                    onClick={() => exportDate(date, items)}
+                    className="flex items-center gap-1 text-[11px] font-semibold text-[#C7F23E]"
+                  >
+                    <Download className="w-3.5 h-3.5" /> Export
+                  </button>
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  {items.map((ph) => (
+                    <button
+                      key={ph.id}
+                      onClick={() => setViewer(ph)}
+                      className="relative aspect-[3/4] rounded-lg overflow-hidden border border-[#24262C] bg-[#121316]"
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={ph.data_url}
+                        alt={`${ph.pose} ${ph.date}`}
+                        className="w-full h-full object-cover"
+                      />
+                      <span className="absolute bottom-0 inset-x-0 bg-black/60 text-[10px] py-0.5 text-center font-semibold uppercase tracking-wide">
+                        {ph.pose}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
             ))}
           </div>
         )}

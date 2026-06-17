@@ -10,8 +10,10 @@ import { getProgression } from "@/lib/progression";
 import { SetLogger } from "@/components/workout/SetLogger";
 import { RestTimer } from "@/components/workout/RestTimer";
 import { ProgressDots } from "@/components/workout/ProgressDots";
+import { requestNotificationPermission, notificationPermission } from "@/lib/restTimer";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { ChevronLeft, ChevronRight, Trash2, X, Bell, Check } from "lucide-react";
 
 export default function ActiveWorkoutPage() {
   const params = useParams();
@@ -20,6 +22,9 @@ export default function ActiveWorkoutPage() {
   const [showLogForm, setShowLogForm] = useState(false);
   const [saving, setSaving] = useState(false);
   const [lastPerf, setLastPerf] = useState<{ date: string; sets: ExerciseLog[] } | null>(null);
+  const [showDiscard, setShowDiscard] = useState(false);
+  const [editingSet, setEditingSet] = useState<number | null>(null);
+  const [notifAsked, setNotifAsked] = useState(false);
 
   const sessionId = params.id as string;
 
@@ -60,7 +65,14 @@ export default function ActiveWorkoutPage() {
   }, [sessionId, store, router]);
 
   const workout = store.activeWorkout;
-  const restSeconds = store.restTimerSeconds;
+  // Derived, timestamp-based remaining seconds (re-reads restNowTick so it
+  // repaints each second while open, and is correct the instant you return).
+  void store.restNowTick;
+  const restSeconds =
+    store.restEndsAt != null
+      ? Math.max(0, Math.ceil((store.restEndsAt - Date.now()) / 1000))
+      : null;
+  const restActive = restSeconds != null && restSeconds > 0;
 
   const currentExerciseId =
     workout && workout.session_id === sessionId
@@ -141,8 +153,43 @@ export default function ActiveWorkoutPage() {
     }
     setSaving(false);
 
-    store.startRest(currentExercise.rest_seconds);
+    store.startRest(currentExercise.rest_seconds, currentExercise.exercise_name);
     setShowLogForm(false);
+  };
+
+  const handleEditSet = async (setIndex: number, updates: { weight_lbs?: number | null; reps?: number; rpe?: number | null }) => {
+    store.editSet(idx, setIndex, updates);
+    // Persist: find the matching DB log for this session+exercise+set_number and update it.
+    try {
+      const logs = await db.exerciseLogs
+        .where("session_id")
+        .equals(sessionId)
+        .toArray();
+      const target = logs
+        .filter((l) => l.exercise_id === currentExercise.exercise_id)
+        .sort((a, b) => a.set_number - b.set_number)[setIndex];
+      if (target) await db.exerciseLogs.update(target.id, updates);
+    } catch (e) {
+      console.error("Failed to persist set edit:", e);
+    }
+  };
+
+  const handleDeleteSet = async (setIndex: number) => {
+    const removed = currentExercise.sets[setIndex];
+    store.deleteSet(idx, setIndex);
+    try {
+      const logs = await db.exerciseLogs
+        .where("session_id")
+        .equals(sessionId)
+        .toArray();
+      const target = logs
+        .filter((l) => l.exercise_id === currentExercise.exercise_id)
+        .sort((a, b) => a.set_number - b.set_number)[setIndex];
+      if (target) await db.exerciseLogs.delete(target.id);
+    } catch (e) {
+      console.error("Failed to delete set:", e);
+    }
+    void removed;
   };
 
   const handleNextExercise = async () => {
@@ -150,8 +197,11 @@ export default function ActiveWorkoutPage() {
       await handleFinishWorkout();
       return;
     }
-    store.clearRest();
-    store.advanceExercise();
+    store.nextExercise();
+  };
+
+  const handlePrevExercise = () => {
+    store.prevExercise();
   };
 
   const handleFinishWorkout = async () => {
@@ -164,7 +214,19 @@ export default function ActiveWorkoutPage() {
     router.push("/workout");
   };
 
+  // Pause: leave the session in progress, just go back.
   const handleCancel = () => {
+    router.push("/workout");
+  };
+
+  // Discard: permanently delete this session and its logged sets.
+  const handleDiscard = async () => {
+    try {
+      await db.exerciseLogs.where("session_id").equals(sessionId).delete();
+      await db.workoutSessions.delete(sessionId);
+    } catch (e) {
+      console.error("Failed to discard workout:", e);
+    }
     store.cancelWorkout();
     router.push("/workout");
   };
@@ -173,19 +235,93 @@ export default function ActiveWorkoutPage() {
     <main className="min-h-screen bg-[#08090A] text-[#F2F4F3] pb-20">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-[#24262C]">
-        <button onClick={handleCancel} className="text-sm font-medium text-[#F2555A]">
-          Cancel
+        <button
+          onClick={handleCancel}
+          className="flex items-center gap-1 text-sm font-medium text-[#9BA0A6]"
+        >
+          <ChevronLeft className="w-4 h-4" /> Pause
         </button>
-        <h1 className="text-base font-bold">{workout.name}</h1>
-        <span className="text-sm text-[#9BA0A6] tabular-nums font-semibold">
-          {idx + 1}/{exercises.length}
-        </span>
+        <h1 className="text-base font-bold truncate px-2">{workout.name}</h1>
+        <button
+          onClick={() => setShowDiscard(true)}
+          className="flex items-center gap-1 text-sm font-medium text-[#F2555A]"
+        >
+          <Trash2 className="w-4 h-4" /> Discard
+        </button>
       </div>
 
+      {/* Discard confirm sheet */}
+      {showDiscard && (
+        <div
+          className="fixed inset-0 z-50 bg-black/70 flex items-end"
+          onClick={() => setShowDiscard(false)}
+        >
+          <div
+            className="w-full bg-[#121316] border-t border-[#24262C] rounded-t-2xl p-5 pb-[max(env(safe-area-inset-bottom),1.25rem)] animate-fade-up"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <p className="font-bold text-lg">Discard this workout?</p>
+            <p className="text-sm text-[#9BA0A6] mt-1">
+              All sets logged in this session will be permanently deleted. This can&apos;t be undone.
+            </p>
+            <div className="flex flex-col gap-2 mt-4">
+              <Button variant="destructive" onClick={handleDiscard}>
+                Discard workout
+              </Button>
+              <Button variant="ghost" onClick={() => setShowDiscard(false)}>
+                Keep going
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="max-w-lg mx-auto px-4 pt-4 flex flex-col gap-4">
+        {/* Exercise navigation */}
+        <div className="flex items-center justify-between">
+          <button
+            onClick={handlePrevExercise}
+            disabled={idx === 0}
+            className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm font-semibold text-[#9BA0A6] disabled:opacity-30 active:bg-[#1B1D22]"
+          >
+            <ChevronLeft className="w-4 h-4" /> Prev
+          </button>
+          <span className="text-sm text-[#9BA0A6] tabular-nums font-semibold">
+            {idx + 1} / {exercises.length}
+          </span>
+          <button
+            onClick={() => store.nextExercise()}
+            disabled={isLastExercise}
+            className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm font-semibold text-[#9BA0A6] disabled:opacity-30 active:bg-[#1B1D22]"
+          >
+            Next <ChevronRight className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Notification opt-in (shown once if not yet granted) */}
+        {!notifAsked && notificationPermission() === "default" && (
+          <button
+            onClick={async () => {
+              await requestNotificationPermission();
+              setNotifAsked(true);
+            }}
+            className="flex items-center gap-2 rounded-xl border border-[#C7F23E]/30 bg-[#C7F23E]/[0.06] px-3.5 py-2.5 text-sm text-left"
+          >
+            <Bell className="w-4 h-4 text-[#C7F23E] shrink-0" />
+            <span className="text-[#D6D9D6]">
+              Enable rest-timer alerts so you&apos;re notified when rest ends, even with the app closed.
+            </span>
+          </button>
+        )}
+
         {/* Rest Timer */}
-        {restSeconds !== null && restSeconds > 0 ? (
-          <RestTimer seconds={restSeconds} onSkip={store.clearRest} />
+        {restActive ? (
+          <RestTimer
+            seconds={restSeconds!}
+            total={store.restDuration ?? restSeconds!}
+            onSkip={store.clearRest}
+            onAdd={() => store.startRest((restSeconds ?? 0) + 30, currentExercise.exercise_name)}
+          />
         ) : (
           <>
             {/* Current Exercise */}
@@ -247,27 +383,44 @@ export default function ActiveWorkoutPage() {
                 {/* Sets logged */}
                 {currentExercise.sets.length > 0 && (
                   <div className="flex flex-col gap-1 mt-2">
-                    {currentExercise.sets.map((s, i) => (
-                      <div
-                        key={i}
-                        className="flex items-center gap-3 px-3 py-1.5 bg-[#1B1D22] rounded-md"
-                      >
-                        <span className="text-xs font-bold text-[#5A5F66] w-5">
-                          {s.set_number}
-                        </span>
-                        <span className="text-sm font-semibold tabular-nums">
-                          {s.weight_lbs ? `${s.weight_lbs}lb` : "BW"} × {s.reps}
-                        </span>
-                        {s.rpe != null && (
-                          <span className="text-xs text-[#9BA0A6]">@ {s.rpe}</span>
-                        )}
-                        {s.is_warmup && (
-                          <span className="text-[10px] font-bold text-[#F5B83D] ml-auto">
-                            W
+                    {currentExercise.sets.map((s, i) =>
+                      editingSet === i ? (
+                        <SetEditRow
+                          key={i}
+                          weight={s.weight_lbs}
+                          reps={s.reps}
+                          onCancel={() => setEditingSet(null)}
+                          onSave={async (w, r) => {
+                            await handleEditSet(i, { weight_lbs: w, reps: r });
+                            setEditingSet(null);
+                          }}
+                          onDelete={async () => {
+                            await handleDeleteSet(i);
+                            setEditingSet(null);
+                          }}
+                        />
+                      ) : (
+                        <button
+                          key={i}
+                          onClick={() => setEditingSet(i)}
+                          className="flex items-center gap-3 px-3 py-2 bg-[#1B1D22] rounded-md text-left active:bg-[#23262C]"
+                        >
+                          <span className="text-xs font-bold text-[#5A5F66] w-5">
+                            {s.set_number}
                           </span>
-                        )}
-                      </div>
-                    ))}
+                          <span className="text-sm font-semibold tabular-nums">
+                            {s.weight_lbs ? `${s.weight_lbs}lb` : "BW"} × {s.reps}
+                          </span>
+                          {s.rpe != null && (
+                            <span className="text-xs text-[#9BA0A6]">@ {s.rpe}</span>
+                          )}
+                          {s.is_warmup && (
+                            <span className="text-[10px] font-bold text-[#F5B83D]">W</span>
+                          )}
+                          <span className="ml-auto text-[10px] text-[#5A5F66]">tap to edit</span>
+                        </button>
+                      )
+                    )}
                   </div>
                 )}
 
@@ -311,5 +464,68 @@ export default function ActiveWorkoutPage() {
         <ProgressDots total={exercises.length} current={idx} />
       </div>
     </main>
+  );
+}
+
+function SetEditRow({
+  weight,
+  reps,
+  onSave,
+  onCancel,
+  onDelete,
+}: {
+  weight: number | null;
+  reps: number;
+  onSave: (weight: number | null, reps: number) => void;
+  onCancel: () => void;
+  onDelete: () => void;
+}) {
+  const [w, setW] = useState(weight != null ? String(weight) : "");
+  const [r, setR] = useState(String(reps));
+  return (
+    <div className="flex items-center gap-2 px-2 py-2 bg-[#08090A] border border-[#C7F23E]/30 rounded-md">
+      <input
+        type="number"
+        inputMode="decimal"
+        value={w}
+        onChange={(e) => setW(e.target.value)}
+        placeholder="lb"
+        className="w-16 bg-[#1B1D22] rounded px-2 py-1 text-sm tabular-nums outline-none"
+      />
+      <span className="text-[#5A5F66]">×</span>
+      <input
+        type="number"
+        inputMode="numeric"
+        value={r}
+        onChange={(e) => setR(e.target.value)}
+        placeholder="reps"
+        className="w-16 bg-[#1B1D22] rounded px-2 py-1 text-sm tabular-nums outline-none"
+      />
+      <button
+        onClick={() => {
+          const repsNum = parseInt(r, 10);
+          if (isNaN(repsNum) || repsNum <= 0) return;
+          onSave(w.trim() === "" ? null : parseFloat(w), repsNum);
+        }}
+        className="ml-auto grid place-items-center h-8 w-8 rounded-md bg-[#C7F23E] text-[#08090A]"
+        aria-label="Save set"
+      >
+        <Check className="w-4 h-4" />
+      </button>
+      <button
+        onClick={onDelete}
+        className="grid place-items-center h-8 w-8 rounded-md bg-[#F2555A]/15 text-[#F2555A]"
+        aria-label="Delete set"
+      >
+        <Trash2 className="w-4 h-4" />
+      </button>
+      <button
+        onClick={onCancel}
+        className="grid place-items-center h-8 w-8 rounded-md text-[#9BA0A6]"
+        aria-label="Cancel"
+      >
+        <X className="w-4 h-4" />
+      </button>
+    </div>
   );
 }

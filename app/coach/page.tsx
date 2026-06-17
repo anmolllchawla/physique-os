@@ -26,13 +26,17 @@ const SUGGESTIONS = [
   "What should I focus on next?",
 ];
 
-// Heuristic: does the message look like a request to generate a workout?
-function looksLikeWorkoutRequest(text: string): boolean {
+// Heuristic: does the message look like a request to generate/revise a workout?
+function looksLikeWorkoutRequest(text: string, hasPriorPlan = false): boolean {
   const t = text.toLowerCase();
-  return (
+  const isNew =
     /\b(workout|session|routine|template|train(ing)?\s*(plan|day)?)\b/.test(t) &&
-    /\b(make|build|create|generate|give|plan|design|write|today|for me|new)\b/.test(t)
-  );
+    /\b(make|build|create|generate|give|plan|design|write|today|for me|new)\b/.test(t);
+  // If a plan already exists, treat revision phrasing as plan mode too.
+  const isRevision =
+    hasPriorPlan &&
+    /\b(harder|easier|lighter|heavier|more|fewer|less|swap|replace|change|adjust|shorter|longer|add|remove|instead|tweak|modify|different)\b/.test(t);
+  return isNew || isRevision;
 }
 
 export default function CoachPage() {
@@ -66,7 +70,8 @@ export default function CoachPage() {
     setMessages((m) => [...m, { role: "user", content: message }]);
     setLoading(true);
 
-    const wantsPlan = looksLikeWorkoutRequest(message);
+    const hasPriorPlan = messages.some((m) => m.plan);
+    const wantsPlan = looksLikeWorkoutRequest(message, hasPriorPlan);
 
     try {
       let context: unknown = undefined;
@@ -94,7 +99,15 @@ export default function CoachPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           message,
-          history: history.map((h) => ({ role: h.role, content: h.content })),
+          // For prior assistant messages that were workout plans, send the full
+          // plan JSON (not just the rationale) so the model has the actual
+          // workout in context and can revise it when asked.
+          history: history.map((h) => ({
+            role: h.role,
+            content: h.plan
+              ? `[Workout plan I generated]\n${JSON.stringify(h.plan)}`
+              : h.content,
+          })),
           context,
           intent: wantsPlan ? "plan" : "chat",
           exercise_library,
