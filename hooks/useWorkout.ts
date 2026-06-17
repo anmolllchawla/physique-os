@@ -4,7 +4,7 @@
 "use client";
 
 import { useLiveQuery } from "dexie-react-hooks";
-import { db, type Exercise, type WorkoutTemplate, type TemplateExercise, type WorkoutSession, type ExerciseLog } from "@/lib/db";
+import { db, type Exercise, type WorkoutTemplate, type TemplateExercise, type ExerciseLog } from "@/lib/db";
 import { generateId } from "@/lib/utils";
 
 // ── Templates ──────────────────────────────────
@@ -137,6 +137,19 @@ export async function completeWorkout(sessionId: string): Promise<void> {
     completed_at: new Date().toISOString(),
     duration_sec: durationSec,
   });
+
+  // Auto-delete the source template so the Templates section stays clean
+  // (you generate a fresh one each day). Only fires on completion — discarding
+  // a workout leaves the template intact. The completed SESSION keeps its own
+  // copy of every logged set, so history is unaffected.
+  if (session.template_id) {
+    try {
+      await db.templateExercises.where("template_id").equals(session.template_id).delete();
+      await db.workoutTemplates.delete(session.template_id);
+    } catch (e) {
+      console.error("Failed to auto-delete used template:", e);
+    }
+  }
 }
 
 // ── Exercise Logs ──────────────────────────────

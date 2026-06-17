@@ -158,6 +158,7 @@ export async function seedIfNeeded(): Promise<void> {
     // Existing install — top up any default exercises added in later versions
     // (matched by name) without disturbing the user's custom exercises.
     await topUpExercises();
+    await removeSeededTemplatesOnce();
     return;
   }
 
@@ -171,35 +172,31 @@ export async function seedIfNeeded(): Promise<void> {
   await db.exercises.bulkAdd(exercises);
   console.log(`[Seed] Seeded ${exercises.length} exercises`);
 
-  console.log("[Seed] Seeding templates...");
-  for (const def of TEMPLATES) {
-    const templateId = generateId();
-    await db.workoutTemplates.add({
-      id: templateId,
-      name: def.name,
-      category: def.category,
-      is_active: true,
-      created_at: new Date().toISOString(),
-    });
+  // Templates are no longer seeded — the user generates them daily via the
+  // AI coach, and completed workouts auto-delete their template. The exercise
+  // library above is still seeded so the coach and custom builder have options.
+  await markSeededTemplatesRemoved();
+}
 
-    const templateExercises = def.exercises.map((te, i) => {
-      const exercise = exercises.find((ex) => ex.name === te.name);
-      if (!exercise) throw new Error(`Exercise "${te.name}" not found`);
-      return {
-        id: generateId(),
-        template_id: templateId,
-        exercise_id: exercise.id,
-        sort_order: i,
-        target_sets: te.target_sets,
-        target_reps: te.target_reps,
-        rest_seconds: te.rest_seconds,
-        rpe_target: te.rpe_target,
-        notes: null,
-      };
-    });
-    await db.templateExercises.bulkAdd(templateExercises);
+// One-time cleanup: remove the original 3 default templates (Push/Pull/Legs
+// Day) from existing installs, keeping the exercise library intact. Guarded by
+// a settings flag so it only runs once and never touches user-made templates.
+async function removeSeededTemplatesOnce(): Promise<void> {
+  const flag = await db.settings.get("seeded_templates_removed");
+  if (flag?.value === "true") return;
+  const names = new Set(TEMPLATES.map((t) => t.name)); // "Push Day", "Pull Day", "Legs Day"
+  const all = await db.workoutTemplates.toArray();
+  const toRemove = all.filter((t) => names.has(t.name));
+  for (const t of toRemove) {
+    await db.templateExercises.where("template_id").equals(t.id).delete();
+    await db.workoutTemplates.delete(t.id);
   }
-  console.log(`[Seed] Seeded ${TEMPLATES.length} templates`);
+  await markSeededTemplatesRemoved();
+  if (toRemove.length) console.log(`[Seed] Removed ${toRemove.length} default templates`);
+}
+
+async function markSeededTemplatesRemoved(): Promise<void> {
+  await db.settings.put({ key: "seeded_templates_removed", value: "true" });
 }
 
 // Adds any default exercises (by name) that aren't already in the DB. Safe to
