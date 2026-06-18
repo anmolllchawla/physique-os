@@ -21,7 +21,11 @@
 //   no fuel logged         → max 75
 
 export interface LifestyleInputs {
-  // Fuel
+  // Fuel — pass progress ratios (0..1) for partial credit as you log through
+  // the day. The *TargetHit booleans still drive the anti-cheat caps.
+  proteinProgress?: number; // 0..1 of protein target
+  caloriesProgress?: number; // 0..1 of calorie target
+  waterProgress?: number; // 0..1 of water target
   proteinTargetHit?: boolean;
   caloriesTargetHit?: boolean;
   waterTargetHit?: boolean;
@@ -84,10 +88,15 @@ export function computeLifestyleScore(inp: LifestyleInputs): LifestyleScore {
     pillars.push({ key, label, earned, max, complete: earned >= max - 0.001 });
   };
 
-  // ── Fuel (25) ──
-  const proteinEarned = inp.proteinTargetHit ? 15 : 0;
-  const calEarned = inp.caloriesTargetHit ? 5 : 0;
-  const waterEarned = inp.waterTargetHit ? 5 : 0;
+  // ── Fuel (25) ── partial credit so the score rises as you log through the day
+  const clamp01 = (n: number | undefined) => Math.max(0, Math.min(1, n ?? 0));
+  // Prefer explicit progress; fall back to the boolean (1 if hit, else 0).
+  const pProg = inp.proteinProgress != null ? clamp01(inp.proteinProgress) : inp.proteinTargetHit ? 1 : 0;
+  const cProg = inp.caloriesProgress != null ? clamp01(inp.caloriesProgress) : inp.caloriesTargetHit ? 1 : 0;
+  const wProg = inp.waterProgress != null ? clamp01(inp.waterProgress) : inp.waterTargetHit ? 1 : 0;
+  const proteinEarned = 15 * pProg;
+  const calEarned = 5 * cProg;
+  const waterEarned = 5 * wProg;
   add("protein", "Protein", proteinEarned, 15);
   add("calories", "Calories", calEarned, 5);
   add("water", "Water", waterEarned, 5);

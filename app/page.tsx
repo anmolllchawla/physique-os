@@ -111,11 +111,18 @@ export default function DashboardPage() {
   const proteinHit = !!fuel && fuel.protein_g >= fuel.protein_target_g;
   const caloriesHit = !!fuel && fuel.calories >= fuel.calories_target * 0.9;
   const waterHit = !!fuel && fuel.water_ml >= fuel.water_target_ml;
+  // Progress ratios so the score rises as you log each glass/meal.
+  const proteinProgress = fuel && fuel.protein_target_g > 0 ? fuel.protein_g / fuel.protein_target_g : 0;
+  const caloriesProgress = fuel && fuel.calories_target > 0 ? fuel.calories / fuel.calories_target : 0;
+  const waterProgress = fuel && fuel.water_target_ml > 0 ? fuel.water_ml / fuel.water_target_ml : 0;
   const presenceDone = (protocol?.tasks ?? []).some((t) => t.pillar === "presence" && t.completed);
   const careerDone = (protocol?.tasks ?? []).some((t) => t.pillar === "career" && t.completed);
   const mindsetDone = (protocol?.tasks ?? []).some((t) => t.pillar === "mindset" && t.completed);
 
   const lifestyleInputs: LifestyleInputs = {
+    proteinProgress,
+    caloriesProgress,
+    waterProgress,
     proteinTargetHit: proteinHit,
     caloriesTargetHit: caloriesHit,
     waterTargetHit: waterHit,

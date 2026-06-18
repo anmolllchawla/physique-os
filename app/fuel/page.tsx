@@ -14,6 +14,54 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Plus, Droplet, Beef, Flame, RotateCcw, Pencil, Check } from "lucide-react";
 
+function EditableTotal({
+  value,
+  hit,
+  onSet,
+}: {
+  value: number;
+  hit: boolean;
+  onSet: (v: number) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(String(value));
+
+  if (editing) {
+    return (
+      <input
+        type="number"
+        inputMode="numeric"
+        autoFocus
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={() => {
+          const n = Math.max(0, Math.round(parseFloat(draft) || 0));
+          onSet(n);
+          setEditing(false);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+        }}
+        className="w-16 bg-[#08090A] border border-[#C7F23E]/40 rounded px-1.5 py-0.5 text-sm tnums outline-none text-right"
+        style={{ fontSize: 16 }}
+      />
+    );
+  }
+  return (
+    <button
+      onClick={() => {
+        setDraft(String(value));
+        setEditing(true);
+      }}
+      className="font-bold underline decoration-dotted decoration-[#3A3D45] underline-offset-2"
+      style={{ color: hit ? "#36D399" : undefined }}
+      aria-label="Tap to edit"
+    >
+      {value}
+    </button>
+  );
+}
+
 function ProgressBar({
   value,
   target,
@@ -108,8 +156,12 @@ export default function FuelPage() {
                 <span className="flex items-center gap-1.5 text-sm font-semibold">
                   <Beef className="w-4 h-4 text-[#F2555A]" /> Protein
                 </span>
-                <span className="text-sm tnums">
-                  <b style={{ color: protein >= pTarget ? "#36D399" : undefined }}>{protein}</b>
+                <span className="text-sm tnums flex items-center gap-1">
+                  <EditableTotal
+                    value={protein}
+                    hit={protein >= pTarget}
+                    onSet={(v) => updateTodayFuel({ protein_g: v })}
+                  />
                   <span className="text-[#5A5F66]"> / {pTarget} g</span>
                 </span>
               </div>
@@ -120,8 +172,12 @@ export default function FuelPage() {
                 <span className="flex items-center gap-1.5 text-sm font-semibold">
                   <Flame className="w-4 h-4 text-[#F5B83D]" /> Calories
                 </span>
-                <span className="text-sm tnums">
-                  <b>{calories}</b>
+                <span className="text-sm tnums flex items-center gap-1">
+                  <EditableTotal
+                    value={calories}
+                    hit={calories >= cTarget}
+                    onSet={(v) => updateTodayFuel({ calories: v })}
+                  />
                   <span className="text-[#5A5F66]"> / {cTarget}</span>
                 </span>
               </div>
@@ -132,8 +188,12 @@ export default function FuelPage() {
                 <span className="flex items-center gap-1.5 text-sm font-semibold">
                   <Droplet className="w-4 h-4 text-[#9BCBF2]" /> Water
                 </span>
-                <span className="text-sm tnums">
-                  <b style={{ color: water >= wTarget ? "#36D399" : undefined }}>{water}</b>
+                <span className="text-sm tnums flex items-center gap-1">
+                  <EditableTotal
+                    value={water}
+                    hit={water >= wTarget}
+                    onSet={(v) => updateTodayFuel({ water_ml: v })}
+                  />
                   <span className="text-[#5A5F66]"> / {wTarget} ml</span>
                 </span>
               </div>
