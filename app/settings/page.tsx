@@ -12,9 +12,11 @@ import {
   githubStatus,
   pushToGitHub,
   pullFromGitHub,
+  getCloudState,
   type Snapshot,
   type GitHubStatus,
 } from "@/lib/backup";
+import { decryptData } from "@/lib/crypto";
 import { formatDateShort } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -50,9 +52,10 @@ export default function SettingsPage() {
   const [io, setIo] = useState<Status>({ kind: "idle" });
   const [resetArmed, setResetArmed] = useState(false);
   const [vaultOn, setVaultOn] = useState(false);
+  const [passCurrent, setPassCurrent] = useState("");
   const [passEntry, setPassEntry] = useState("");
   const [passConfirm, setPassConfirm] = useState("");
-  const [vaultMode, setVaultMode] = useState<"idle" | "setting">("idle");
+  const [vaultMode, setVaultMode] = useState<"idle" | "setting" | "changing">("idle");
   const [vaultMsg, setVaultMsg] = useState<string | null>(null);
   const [vaultBusy, setVaultBusy] = useState(false);
 
@@ -72,8 +75,15 @@ export default function SettingsPage() {
     }
     setVaultBusy(true);
     try {
-      // Hold the passphrase for this session, enable the vault, then push an
-      // encrypted backup so the repo immediately holds ciphertext.
+      // Guard: never silently overwrite an existing encrypted cloud backup.
+      const state = await getCloudState();
+      if (state.kind === "encrypted") {
+        setVaultMsg(
+          "There's already an encrypted backup. Reload the app and unlock it, then use Change passphrase."
+        );
+        setVaultBusy(false);
+        return;
+      }
       setSessionPassphrase(passEntry);
       await markVaultEnabled();
       const snap = await buildSnapshot();
@@ -89,6 +99,55 @@ export default function SettingsPage() {
       );
     } catch {
       setVaultMsg("Couldn't enable encryption. Try again.");
+    } finally {
+      setVaultBusy(false);
+    }
+  };
+
+  // Changing the passphrase REQUIRES the current one (anti-takeover): we verify
+  // it by decrypting the cloud blob, then re-encrypt with the new passphrase.
+  const handleChangePassphrase = async () => {
+    setVaultMsg(null);
+    if (passEntry.length < 8) {
+      setVaultMsg("New passphrase needs at least 8 characters.");
+      return;
+    }
+    if (passEntry !== passConfirm) {
+      setVaultMsg("New passphrases don't match.");
+      return;
+    }
+    setVaultBusy(true);
+    try {
+      const state = await getCloudState();
+      if (state.kind !== "encrypted") {
+        setVaultMsg("No encrypted backup found to change.");
+        setVaultBusy(false);
+        return;
+      }
+      // Verify current passphrase by decrypting.
+      try {
+        await decryptData(state.blob, passCurrent);
+      } catch {
+        setVaultMsg("Current passphrase is wrong.");
+        setVaultBusy(false);
+        return;
+      }
+      // Re-encrypt the current local data under the new passphrase and push.
+      setSessionPassphrase(passEntry);
+      await markVaultEnabled();
+      const snap = await buildSnapshot();
+      const res = await pushToGitHub(snap);
+      setVaultMode("idle");
+      setPassCurrent("");
+      setPassEntry("");
+      setPassConfirm("");
+      setVaultMsg(
+        res.ok
+          ? "Passphrase changed. Use the new one on your other devices."
+          : "Re-encrypted locally, but upload failed. Check GitHub sync."
+      );
+    } catch {
+      setVaultMsg("Couldn't change passphrase. Try again.");
     } finally {
       setVaultBusy(false);
     }
@@ -269,6 +328,48 @@ export default function SettingsPage() {
                     </Button>
                   </div>
                 </div>
+              ) : vaultMode === "changing" ? (
+                <div className="flex flex-col gap-2">
+                  <Input
+                    type="password"
+                    placeholder="Current passphrase"
+                    value={passCurrent}
+                    onChange={(e) => setPassCurrent(e.target.value)}
+                    className="bg-[#08090A] border-[#24262C]"
+                  />
+                  <Input
+                    type="password"
+                    placeholder="New passphrase (8+ characters)"
+                    value={passEntry}
+                    onChange={(e) => setPassEntry(e.target.value)}
+                    className="bg-[#08090A] border-[#24262C]"
+                  />
+                  <Input
+                    type="password"
+                    placeholder="Confirm new passphrase"
+                    value={passConfirm}
+                    onChange={(e) => setPassConfirm(e.target.value)}
+                    className="bg-[#08090A] border-[#24262C]"
+                  />
+                  <div className="flex gap-2">
+                    <Button className="flex-1" onClick={handleChangePassphrase} disabled={vaultBusy}>
+                      {vaultBusy ? "Updating…" : "Change passphrase"}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      className="flex-1"
+                      onClick={() => {
+                        setVaultMode("idle");
+                        setPassCurrent("");
+                        setPassEntry("");
+                        setPassConfirm("");
+                        setVaultMsg(null);
+                      }}
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                </div>
               ) : (
                 <div className="flex gap-2">
                   {!vaultOn ? (
@@ -283,14 +384,26 @@ export default function SettingsPage() {
                       Set up encryption
                     </Button>
                   ) : (
-                    <Button
-                      variant="ghost"
-                      className="flex-1"
-                      onClick={handleDisableVault}
-                      disabled={vaultBusy}
-                    >
-                      Turn off encryption
-                    </Button>
+                    <>
+                      <Button
+                        variant="secondary"
+                        className="flex-1"
+                        onClick={() => {
+                          setVaultMode("changing");
+                          setVaultMsg(null);
+                        }}
+                      >
+                        Change passphrase
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        className="flex-1"
+                        onClick={handleDisableVault}
+                        disabled={vaultBusy}
+                      >
+                        Turn off
+                      </Button>
+                    </>
                   )}
                 </div>
               )}

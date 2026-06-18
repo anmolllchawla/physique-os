@@ -1,32 +1,45 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { Lock, Loader2 } from "lucide-react";
+import { Lock, Loader2, CloudOff, RefreshCw } from "lucide-react";
+import { setSessionPassphrase, markActive, markVaultEnabled } from "@/lib/vault";
 import {
-  isVaultEnabled,
-  isLocked,
-  setSessionPassphrase,
-  markActive,
-  lockNow,
-} from "@/lib/vault";
-import { pullRawFromGitHub, restoreSnapshot, type Snapshot } from "@/lib/backup";
-import { decryptData, isEncryptedBlob, WrongPassphraseError } from "@/lib/crypto";
-import { db } from "@/lib/db";
+  getCloudState,
+  restoreSnapshot,
+  type Snapshot,
+} from "@/lib/backup";
+import { decryptData, WrongPassphraseError, type EncryptedBlob } from "@/lib/crypto";
+
+type Phase =
+  | { k: "checking" }
+  | { k: "open" }
+  | { k: "locked"; blob: EncryptedBlob }
+  | { k: "error"; message: string };
 
 export function AppGate({ children }: { children: React.ReactNode }) {
-  const [phase, setPhase] = useState<"checking" | "open" | "locked">("checking");
+  const [phase, setPhase] = useState<Phase>({ k: "checking" });
 
   const check = useCallback(async () => {
-    const enabled = await isVaultEnabled();
-    if (!enabled) {
-      setPhase("open");
-      return;
-    }
-    if (isLocked()) {
-      setPhase("locked");
-    } else {
-      markActive();
-      setPhase("open");
+    setPhase({ k: "checking" });
+    const state = await getCloudState();
+    switch (state.kind) {
+      case "encrypted":
+        // Encrypted backup in the cloud → require the passphrase on EVERY
+        // device, every load. This is the fix: encryption is a property of
+        // the cloud backup, not a per-device toggle.
+        setPhase({ k: "locked", blob: state.blob });
+        break;
+      case "error":
+        // Online-only app: if we can't reach the cloud, don't expose the app.
+        setPhase({ k: "error", message: state.message });
+        break;
+      case "empty":
+      case "plaintext":
+      case "unconfigured":
+        // No encrypted vault yet → app is open; setup happens in Settings.
+        markActive();
+        setPhase({ k: "open" });
+        break;
     }
   }, []);
 
@@ -34,42 +47,23 @@ export function AppGate({ children }: { children: React.ReactNode }) {
     check();
   }, [check]);
 
-  useEffect(() => {
-    const onActivity = () => {
-      if (phase === "open") markActive();
-    };
-    const onVisible = async () => {
-      if (document.visibilityState === "visible" && phase === "open") {
-        if (await isVaultEnabled()) {
-          if (isLocked()) {
-            lockNow();
-            setPhase("locked");
-          }
-        }
-      } else if (document.visibilityState === "hidden") {
-        markActive();
-      }
-    };
-    window.addEventListener("pointerdown", onActivity);
-    window.addEventListener("keydown", onActivity);
-    document.addEventListener("visibilitychange", onVisible);
-    return () => {
-      window.removeEventListener("pointerdown", onActivity);
-      window.removeEventListener("keydown", onActivity);
-      document.removeEventListener("visibilitychange", onVisible);
-    };
-  }, [phase]);
-
-  if (phase === "checking") {
-    return <div className="min-h-screen bg-[#08090A]" />;
+  if (phase.k === "checking") {
+    return (
+      <div className="min-h-screen bg-[#08090A] flex items-center justify-center">
+        <Loader2 className="w-6 h-6 text-[#5A5F66] animate-spin" />
+      </div>
+    );
   }
-  if (phase === "locked") {
-    return <PassphraseScreen onUnlock={() => setPhase("open")} />;
+  if (phase.k === "error") {
+    return <ErrorScreen message={phase.message} onRetry={check} />;
+  }
+  if (phase.k === "locked") {
+    return <PassphraseScreen blob={phase.blob} onUnlock={() => setPhase({ k: "open" })} />;
   }
   return <>{children}</>;
 }
 
-function PassphraseScreen({ onUnlock }: { onUnlock: () => void }) {
+function PassphraseScreen({ blob, onUnlock }: { blob: EncryptedBlob; onUnlock: () => void }) {
   const [pass, setPass] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -79,43 +73,29 @@ function PassphraseScreen({ onUnlock }: { onUnlock: () => void }) {
     setBusy(true);
     setError(null);
     try {
-      const raw = await pullRawFromGitHub();
-
-      if (raw == null) {
-        setSessionPassphrase(pass);
-        onUnlock();
+      let snap: Snapshot;
+      try {
+        snap = await decryptData<Snapshot>(blob, pass);
+      } catch (e) {
+        setError(
+          e instanceof WrongPassphraseError
+            ? "Wrong passphrase. Try again."
+            : "Couldn't read the backup."
+        );
         return;
       }
-
-      if (isEncryptedBlob(raw)) {
-        let snap: Snapshot;
-        try {
-          snap = await decryptData<Snapshot>(raw, pass);
-        } catch (e) {
-          if (e instanceof WrongPassphraseError) {
-            setError("Wrong passphrase. Try again.");
-          } else {
-            setError("Couldn't read the backup. Check your connection.");
-          }
-          return;
-        }
-        setSessionPassphrase(pass);
-        const hasLocal =
-          (await db.workoutSessions.count()) > 0 || (await db.dailyCheckins.count()) > 0;
-        if (!hasLocal) {
-          await restoreSnapshot(snap, "replace");
-        }
-        onUnlock();
-      } else {
-        setSessionPassphrase(pass);
-        onUnlock();
-      }
+      // Correct passphrase. Hold it for the session and load the data.
+      setSessionPassphrase(pass);
+      await markVaultEnabled();
+      // Always load the decrypted cloud copy so every device shows current data.
+      await restoreSnapshot(snap, "replace");
+      onUnlock();
     } catch {
-      setError("Couldn't reach your backup. Check your connection and retry.");
+      setError("Something went wrong. Try again.");
     } finally {
       setBusy(false);
     }
-  }, [pass, busy, onUnlock]);
+  }, [pass, busy, blob, onUnlock]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -132,7 +112,7 @@ function PassphraseScreen({ onUnlock }: { onUnlock: () => void }) {
       </div>
       <h1 className="text-lg font-bold">Unlock PhysiqueOS</h1>
       <p className="text-xs text-[#5A5F66] mt-1 mb-8 text-center max-w-xs">
-        Enter your passphrase to decrypt your data on this device.
+        Enter your passphrase to decrypt your data.
       </p>
 
       <input
@@ -144,7 +124,7 @@ function PassphraseScreen({ onUnlock }: { onUnlock: () => void }) {
           setError(null);
         }}
         placeholder="Passphrase"
-        className="w-full max-w-xs bg-[#121316] border border-[#24262C] rounded-xl px-4 py-3 text-base text-center outline-none focus:border-[#C7F23E]/50"
+        className="w-full max-w-xs bg-[#121316] border border-[#24262C] rounded-xl px-4 py-3 text-center outline-none focus:border-[#C7F23E]/50"
         style={{ fontSize: 16 }}
       />
 
@@ -162,6 +142,27 @@ function PassphraseScreen({ onUnlock }: { onUnlock: () => void }) {
         There&apos;s no recovery. If you forget this passphrase, your encrypted data
         can&apos;t be restored.
       </p>
+    </div>
+  );
+}
+
+function ErrorScreen({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <div className="fixed inset-0 z-[100] bg-[#08090A] flex flex-col items-center justify-center px-8">
+      <div className="grid place-items-center h-14 w-14 rounded-2xl bg-[#F2555A]/10 border border-[#F2555A]/30 mb-6">
+        <CloudOff className="w-6 h-6 text-[#F2555A]" />
+      </div>
+      <h1 className="text-lg font-bold">Can&apos;t reach your data</h1>
+      <p className="text-xs text-[#9BA0A6] mt-2 mb-1 text-center max-w-xs">
+        PhysiqueOS needs a connection to load your encrypted data.
+      </p>
+      <p className="text-[11px] text-[#5A5F66] mb-8 text-center max-w-xs">{message}</p>
+      <button
+        onClick={onRetry}
+        className="w-full max-w-xs h-12 rounded-xl bg-[#C7F23E] text-[#08090A] font-bold flex items-center justify-center gap-2"
+      >
+        <RefreshCw className="w-4 h-4" /> Retry
+      </button>
     </div>
   );
 }

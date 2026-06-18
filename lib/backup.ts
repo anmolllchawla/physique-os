@@ -9,7 +9,7 @@
 // never ships to the client bundle. See app/api/github/route.ts.
 
 import { db } from "./db";
-import { encryptData, decryptData, isEncryptedBlob } from "./crypto";
+import { encryptData, decryptData, isEncryptedBlob, type EncryptedBlob } from "./crypto";
 import { getSessionPassphrase, isVaultEnabled } from "./vault";
 
 export const SNAPSHOT_VERSION = 2;
@@ -228,4 +228,29 @@ export async function pullFromGitHub(): Promise<Snapshot | null> {
     return await decryptData<Snapshot>(raw, passphrase);
   }
   return raw as Snapshot;
+}
+
+// Classify what's in the cloud WITHOUT needing the passphrase. Drives the gate:
+//   "encrypted" → show unlock screen on every device
+//   "plaintext" / "empty" → first-time setup is allowed
+//   "unconfigured" → GitHub sync isn't set up (no env vars)
+//   "error" → couldn't reach the cloud (online-only app → block with retry)
+export type CloudState =
+  | { kind: "encrypted"; blob: EncryptedBlob }
+  | { kind: "plaintext"; snapshot: Snapshot }
+  | { kind: "empty" }
+  | { kind: "unconfigured" }
+  | { kind: "error"; message: string };
+
+export async function getCloudState(): Promise<CloudState> {
+  const status = await githubStatus().catch(() => ({ configured: false }) as GitHubStatus);
+  if (!status.configured) return { kind: "unconfigured" };
+  try {
+    const raw = await pullRawFromGitHub();
+    if (raw == null) return { kind: "empty" };
+    if (isEncryptedBlob(raw)) return { kind: "encrypted", blob: raw };
+    return { kind: "plaintext", snapshot: raw as Snapshot };
+  } catch (e) {
+    return { kind: "error", message: e instanceof Error ? e.message : "Network error" };
+  }
 }
