@@ -5,14 +5,13 @@ import {
   useTodayFuel,
   addFuel,
   updateTodayFuel,
-  resetTodayFuel,
   PROTEIN_PRESETS,
   DEFAULT_FUEL_TARGETS,
 } from "@/hooks/useFuel";
 import { PageHeader, Section } from "@/components/Layout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Plus, Droplet, Beef, Flame, RotateCcw, Pencil, Check } from "lucide-react";
+import { Plus, Droplet, Beef, Flame, Pencil } from "lucide-react";
 
 function EditableTotal({
   value,
@@ -261,25 +260,14 @@ export default function FuelPage() {
 
         {/* Notes */}
         <Section label="Meal notes">
-          <div className="flex gap-2">
-            <Input
-              placeholder="What did you eat?"
-              value={notesValue}
-              onChange={(e) => setNotes(e.target.value)}
-              className="bg-[#121316] border-[#24262C]"
-            />
-            <Button variant="secondary" onClick={() => updateTodayFuel({ notes: notesValue.trim() || null })} className="shrink-0">
-              <Check className="w-4 h-4" />
-            </Button>
-          </div>
+          <Input
+            placeholder="What did you eat?"
+            value={notesValue}
+            onChange={(e) => setNotes(e.target.value)}
+            onBlur={() => updateTodayFuel({ notes: notesValue.trim() || null })}
+            className="bg-[#121316] border-[#24262C]"
+          />
         </Section>
-
-        <button
-          onClick={() => resetTodayFuel()}
-          className="flex items-center justify-center gap-1.5 text-sm text-[#5A5F66] py-2"
-        >
-          <RotateCcw className="w-4 h-4" /> Reset today
-        </button>
       </div>
     </main>
   );
