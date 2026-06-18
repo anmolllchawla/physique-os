@@ -9,6 +9,8 @@
 // never ships to the client bundle. See app/api/github/route.ts.
 
 import { db } from "./db";
+import { encryptData, decryptData, isEncryptedBlob } from "./crypto";
+import { getSessionPassphrase, isVaultEnabled } from "./vault";
 
 export const SNAPSHOT_VERSION = 2;
 
@@ -187,20 +189,43 @@ export async function githubStatus(): Promise<GitHubStatus> {
 }
 
 export async function pushToGitHub(snap: Snapshot): Promise<{ ok: boolean; sha?: string; error?: string }> {
+  // If the vault is unlocked, encrypt the snapshot before it leaves the device.
+  const passphrase = getSessionPassphrase();
+  let payload: unknown = snap;
+  if (passphrase && (await isVaultEnabled())) {
+    payload = await encryptData(snap, passphrase);
+  }
   const res = await fetch("/api/github", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ snapshot: snap }),
+    body: JSON.stringify({ snapshot: payload }),
   });
   const json = await res.json().catch(() => ({}));
   if (!res.ok) return { ok: false, error: json.error ?? `HTTP ${res.status}` };
   return { ok: true, sha: json.sha };
 }
 
-export async function pullFromGitHub(): Promise<Snapshot | null> {
+// Returns the raw stored object — which may be a plaintext Snapshot (legacy)
+// or an EncryptedBlob. Callers decrypt as needed.
+export async function pullRawFromGitHub(): Promise<unknown | null> {
   const res = await fetch("/api/github?action=pull", { method: "GET" });
   if (res.status === 404) return null;
-  if (!res.ok) throw new Error(`Pull failed: HTTP ${res.status}`);
+  if (!res.ok) {
+    const j = await res.json().catch(() => ({}));
+    throw new Error(j.error ?? `Pull failed: HTTP ${res.status}`);
+  }
   const json = await res.json();
-  return json.snapshot as Snapshot;
+  return json.snapshot ?? null;
+}
+
+export async function pullFromGitHub(): Promise<Snapshot | null> {
+  const raw = await pullRawFromGitHub();
+  if (raw == null) return null;
+  // Encrypted? decrypt with the active session passphrase.
+  if (isEncryptedBlob(raw)) {
+    const passphrase = getSessionPassphrase();
+    if (!passphrase) throw new Error("Locked — enter your passphrase first.");
+    return await decryptData<Snapshot>(raw, passphrase);
+  }
+  return raw as Snapshot;
 }

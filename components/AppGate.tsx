@@ -1,44 +1,50 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { Lock, Delete } from "lucide-react";
+import { Lock, Loader2 } from "lucide-react";
 import {
-  shouldLock,
-  verifyPin,
-  markUnlocked,
+  isVaultEnabled,
+  isLocked,
+  setSessionPassphrase,
   markActive,
   lockNow,
-} from "@/lib/lock";
+} from "@/lib/vault";
+import { pullRawFromGitHub, restoreSnapshot, type Snapshot } from "@/lib/backup";
+import { decryptData, isEncryptedBlob, WrongPassphraseError } from "@/lib/crypto";
+import { db } from "@/lib/db";
 
-// Wraps the app. While locked, renders the PIN pad instead of children.
 export function AppGate({ children }: { children: React.ReactNode }) {
-  const [checked, setChecked] = useState(false);
-  const [locked, setLocked] = useState(false);
+  const [phase, setPhase] = useState<"checking" | "open" | "locked">("checking");
 
-  // Initial check on mount.
-  useEffect(() => {
-    let cancelled = false;
-    shouldLock().then((l) => {
-      if (cancelled) return;
-      setLocked(l);
-      setChecked(true);
-      if (!l) markActive();
-    });
-    return () => {
-      cancelled = true;
-    };
+  const check = useCallback(async () => {
+    const enabled = await isVaultEnabled();
+    if (!enabled) {
+      setPhase("open");
+      return;
+    }
+    if (isLocked()) {
+      setPhase("locked");
+    } else {
+      markActive();
+      setPhase("open");
+    }
   }, []);
 
-  // Track activity + re-lock when returning after being away too long.
+  useEffect(() => {
+    check();
+  }, [check]);
+
   useEffect(() => {
     const onActivity = () => {
-      if (!locked) markActive();
+      if (phase === "open") markActive();
     };
     const onVisible = async () => {
-      if (document.visibilityState === "visible" && !locked) {
-        if (await shouldLock()) {
-          lockNow();
-          setLocked(true);
+      if (document.visibilityState === "visible" && phase === "open") {
+        if (await isVaultEnabled()) {
+          if (isLocked()) {
+            lockNow();
+            setPhase("locked");
+          }
         }
       } else if (document.visibilityState === "hidden") {
         markActive();
@@ -52,128 +58,110 @@ export function AppGate({ children }: { children: React.ReactNode }) {
       window.removeEventListener("keydown", onActivity);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [locked]);
+  }, [phase]);
 
-  const handleUnlock = useCallback(() => {
-    markUnlocked();
-    setLocked(false);
-  }, []);
-
-  // Avoid a flash of content before the lock check resolves.
-  if (!checked) {
+  if (phase === "checking") {
     return <div className="min-h-screen bg-[#08090A]" />;
   }
-
-  if (locked) {
-    return <LockScreen onUnlock={handleUnlock} />;
+  if (phase === "locked") {
+    return <PassphraseScreen onUnlock={() => setPhase("open")} />;
   }
-
   return <>{children}</>;
 }
 
-function LockScreen({ onUnlock }: { onUnlock: () => void }) {
-  const [pin, setPin] = useState("");
-  const [error, setError] = useState(false);
-  const [shake, setShake] = useState(false);
+function PassphraseScreen({ onUnlock }: { onUnlock: () => void }) {
+  const [pass, setPass] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const submit = useCallback(
-    async (code: string) => {
-      const ok = await verifyPin(code);
-      if (ok) {
+  const submit = useCallback(async () => {
+    if (busy || pass.length === 0) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const raw = await pullRawFromGitHub();
+
+      if (raw == null) {
+        setSessionPassphrase(pass);
+        onUnlock();
+        return;
+      }
+
+      if (isEncryptedBlob(raw)) {
+        let snap: Snapshot;
+        try {
+          snap = await decryptData<Snapshot>(raw, pass);
+        } catch (e) {
+          if (e instanceof WrongPassphraseError) {
+            setError("Wrong passphrase. Try again.");
+          } else {
+            setError("Couldn't read the backup. Check your connection.");
+          }
+          return;
+        }
+        setSessionPassphrase(pass);
+        const hasLocal =
+          (await db.workoutSessions.count()) > 0 || (await db.dailyCheckins.count()) > 0;
+        if (!hasLocal) {
+          await restoreSnapshot(snap, "replace");
+        }
         onUnlock();
       } else {
-        setError(true);
-        setShake(true);
-        setTimeout(() => setShake(false), 400);
-        setTimeout(() => {
-          setPin("");
-          setError(false);
-        }, 600);
+        setSessionPassphrase(pass);
+        onUnlock();
       }
-    },
-    [onUnlock]
-  );
+    } catch {
+      setError("Couldn't reach your backup. Check your connection and retry.");
+    } finally {
+      setBusy(false);
+    }
+  }, [pass, busy, onUnlock]);
 
-  const press = (d: string) => {
-    if (pin.length >= 6) return;
-    const next = pin + d;
-    setPin(next);
-    setError(false);
-    // Auto-submit at 6; user can also submit shorter PINs via the check key.
-    if (next.length === 6) submit(next);
-  };
-
-  const back = () => {
-    setPin((p) => p.slice(0, -1));
-    setError(false);
-  };
-
-  // Allow hardware keyboard on desktop.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key >= "0" && e.key <= "9") press(e.key);
-      else if (e.key === "Backspace") back();
-      else if (e.key === "Enter" && pin.length >= 4) submit(pin);
+      if (e.key === "Enter") submit();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pin]);
+  }, [submit]);
 
   return (
     <div className="fixed inset-0 z-[100] bg-[#08090A] flex flex-col items-center justify-center px-8">
       <div className="grid place-items-center h-14 w-14 rounded-2xl bg-[#C7F23E]/10 border border-[#C7F23E]/30 mb-6">
         <Lock className="w-6 h-6 text-[#C7F23E]" />
       </div>
-      <h1 className="text-lg font-bold">Enter PIN</h1>
-      <p className="text-xs text-[#5A5F66] mt-1 mb-8">PhysiqueOS is locked</p>
+      <h1 className="text-lg font-bold">Unlock PhysiqueOS</h1>
+      <p className="text-xs text-[#5A5F66] mt-1 mb-8 text-center max-w-xs">
+        Enter your passphrase to decrypt your data on this device.
+      </p>
 
-      {/* dots */}
-      <div className={`flex gap-3 mb-10 ${shake ? "animate-[shake_0.4s]" : ""}`}>
-        {Array.from({ length: 6 }).map((_, i) => (
-          <span
-            key={i}
-            className="h-3.5 w-3.5 rounded-full border-2 transition-colors"
-            style={{
-              borderColor: error ? "#F2555A" : i < pin.length ? "#C7F23E" : "#3A3D45",
-              backgroundColor: i < pin.length ? (error ? "#F2555A" : "#C7F23E") : "transparent",
-            }}
-          />
-        ))}
-      </div>
+      <input
+        type="password"
+        autoFocus
+        value={pass}
+        onChange={(e) => {
+          setPass(e.target.value);
+          setError(null);
+        }}
+        placeholder="Passphrase"
+        className="w-full max-w-xs bg-[#121316] border border-[#24262C] rounded-xl px-4 py-3 text-base text-center outline-none focus:border-[#C7F23E]/50"
+        style={{ fontSize: 16 }}
+      />
 
-      {/* keypad */}
-      <div className="grid grid-cols-3 gap-4">
-        {["1", "2", "3", "4", "5", "6", "7", "8", "9"].map((d) => (
-          <Key key={d} onClick={() => press(d)}>
-            {d}
-          </Key>
-        ))}
-        {pin.length >= 4 ? (
-          <Key onClick={() => submit(pin)}>
-            <span className="text-[#C7F23E] text-sm font-bold">OK</span>
-          </Key>
-        ) : (
-          <span />
-        )}
-        <Key onClick={() => press("0")}>0</Key>
-        <Key onClick={back}>
-          <Delete className="w-5 h-5 text-[#9BA0A6]" />
-        </Key>
-      </div>
+      {error && <p className="text-sm text-[#F2555A] mt-3">{error}</p>}
 
-      <style>{`@keyframes shake{0%,100%{transform:translateX(0)}25%{transform:translateX(-8px)}75%{transform:translateX(8px)}}`}</style>
+      <button
+        onClick={submit}
+        disabled={busy || pass.length === 0}
+        className="w-full max-w-xs mt-5 h-12 rounded-xl bg-[#C7F23E] text-[#08090A] font-bold disabled:opacity-40 flex items-center justify-center gap-2"
+      >
+        {busy ? <Loader2 className="w-5 h-5 animate-spin" /> : "Unlock"}
+      </button>
+
+      <p className="text-[11px] text-[#5A5F66] mt-6 text-center max-w-xs leading-relaxed">
+        There&apos;s no recovery. If you forget this passphrase, your encrypted data
+        can&apos;t be restored.
+      </p>
     </div>
-  );
-}
-
-function Key({ children, onClick }: { children: React.ReactNode; onClick: () => void }) {
-  return (
-    <button
-      onClick={onClick}
-      className="grid place-items-center h-16 w-16 rounded-full bg-[#121316] border border-[#24262C] text-2xl font-semibold tabular-nums active:bg-[#1B1D22] transition-colors"
-    >
-      {children}
-    </button>
   );
 }

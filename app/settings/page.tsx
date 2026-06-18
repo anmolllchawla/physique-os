@@ -34,7 +34,12 @@ import {
   Lock,
   Bell,
 } from "lucide-react";
-import { isPinSet, setPin as savePin, removePin } from "@/lib/lock";
+import {
+  isVaultEnabled,
+  markVaultEnabled,
+  disableVault,
+  setSessionPassphrase,
+} from "@/lib/vault";
 
 type Status = { kind: "idle" | "ok" | "err" | "busy"; msg?: string };
 
@@ -44,38 +49,65 @@ export default function SettingsPage() {
   const [sync, setSync] = useState<Status>({ kind: "idle" });
   const [io, setIo] = useState<Status>({ kind: "idle" });
   const [resetArmed, setResetArmed] = useState(false);
-  const [pinOn, setPinOn] = useState(false);
-  const [pinEntry, setPinEntry] = useState("");
-  const [pinConfirm, setPinConfirm] = useState("");
-  const [pinMode, setPinMode] = useState<"idle" | "setting">("idle");
-  const [pinMsg, setPinMsg] = useState<string | null>(null);
+  const [vaultOn, setVaultOn] = useState(false);
+  const [passEntry, setPassEntry] = useState("");
+  const [passConfirm, setPassConfirm] = useState("");
+  const [vaultMode, setVaultMode] = useState<"idle" | "setting">("idle");
+  const [vaultMsg, setVaultMsg] = useState<string | null>(null);
+  const [vaultBusy, setVaultBusy] = useState(false);
 
   useEffect(() => {
-    isPinSet().then(setPinOn);
+    isVaultEnabled().then(setVaultOn);
   }, []);
 
-  const handleSetPin = async () => {
-    setPinMsg(null);
-    if (!/^\d{4,6}$/.test(pinEntry)) {
-      setPinMsg("PIN must be 4–6 digits.");
+  const handleEnableVault = async () => {
+    setVaultMsg(null);
+    if (passEntry.length < 8) {
+      setVaultMsg("Use at least 8 characters for real security.");
       return;
     }
-    if (pinEntry !== pinConfirm) {
-      setPinMsg("PINs don't match.");
+    if (passEntry !== passConfirm) {
+      setVaultMsg("Passphrases don't match.");
       return;
     }
-    await savePin(pinEntry);
-    setPinOn(true);
-    setPinMode("idle");
-    setPinEntry("");
-    setPinConfirm("");
-    setPinMsg("PIN set. The app will lock when idle.");
+    setVaultBusy(true);
+    try {
+      // Hold the passphrase for this session, enable the vault, then push an
+      // encrypted backup so the repo immediately holds ciphertext.
+      setSessionPassphrase(passEntry);
+      await markVaultEnabled();
+      const snap = await buildSnapshot();
+      const res = await pushToGitHub(snap);
+      setVaultOn(true);
+      setVaultMode("idle");
+      setPassEntry("");
+      setPassConfirm("");
+      setVaultMsg(
+        res.ok
+          ? "Encryption on. Your backup is now encrypted. Don't forget this passphrase — there's no recovery."
+          : "Encryption on locally, but the encrypted backup didn't upload. Check GitHub sync."
+      );
+    } catch {
+      setVaultMsg("Couldn't enable encryption. Try again.");
+    } finally {
+      setVaultBusy(false);
+    }
   };
 
-  const handleRemovePin = async () => {
-    await removePin();
-    setPinOn(false);
-    setPinMsg("PIN removed.");
+  const handleDisableVault = async () => {
+    setVaultBusy(true);
+    try {
+      // Re-encrypt off: push a plaintext snapshot, then disable.
+      await disableVault();
+      const snap = await buildSnapshot();
+      await pushToGitHub(snap); // session passphrase cleared → pushes plaintext
+      setVaultOn(false);
+      setVaultMsg("Encryption disabled. Backup is no longer encrypted.");
+    } catch {
+      setVaultMsg("Couldn't disable encryption.");
+    } finally {
+      setVaultBusy(false);
+    }
   };
 
   const counts = useLiveQuery(async () => ({
@@ -184,7 +216,7 @@ export default function SettingsPage() {
           </Card>
         </section>
 
-        {/* Security */}
+        {/* Security — encryption */}
         <section className="flex flex-col gap-3">
           <p className="text-xs font-semibold text-[#9BA0A6] uppercase tracking-wider px-1">
             Security
@@ -194,47 +226,43 @@ export default function SettingsPage() {
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <Lock className="w-4 h-4 text-[#9BA0A6]" />
-                  <span className="text-sm font-medium">App lock (PIN)</span>
+                  <span className="text-sm font-medium">Encrypt my data</span>
                 </div>
-                {pinOn ? (
+                {vaultOn ? (
                   <span className="text-xs font-bold text-[#36D399]">On</span>
                 ) : (
                   <span className="text-xs font-bold text-[#5A5F66]">Off</span>
                 )}
               </div>
 
-              {pinMode === "setting" ? (
+              {vaultMode === "setting" ? (
                 <div className="flex flex-col gap-2">
                   <Input
                     type="password"
-                    inputMode="numeric"
-                    maxLength={6}
-                    placeholder="New PIN (4–6 digits)"
-                    value={pinEntry}
-                    onChange={(e) => setPinEntry(e.target.value.replace(/\D/g, ""))}
+                    placeholder="Passphrase (8+ characters)"
+                    value={passEntry}
+                    onChange={(e) => setPassEntry(e.target.value)}
                     className="bg-[#08090A] border-[#24262C]"
                   />
                   <Input
                     type="password"
-                    inputMode="numeric"
-                    maxLength={6}
-                    placeholder="Confirm PIN"
-                    value={pinConfirm}
-                    onChange={(e) => setPinConfirm(e.target.value.replace(/\D/g, ""))}
+                    placeholder="Confirm passphrase"
+                    value={passConfirm}
+                    onChange={(e) => setPassConfirm(e.target.value)}
                     className="bg-[#08090A] border-[#24262C]"
                   />
                   <div className="flex gap-2">
-                    <Button className="flex-1" onClick={handleSetPin}>
-                      Save PIN
+                    <Button className="flex-1" onClick={handleEnableVault} disabled={vaultBusy}>
+                      {vaultBusy ? "Encrypting…" : "Turn on encryption"}
                     </Button>
                     <Button
                       variant="ghost"
                       className="flex-1"
                       onClick={() => {
-                        setPinMode("idle");
-                        setPinEntry("");
-                        setPinConfirm("");
-                        setPinMsg(null);
+                        setVaultMode("idle");
+                        setPassEntry("");
+                        setPassConfirm("");
+                        setVaultMsg(null);
                       }}
                     >
                       Cancel
@@ -243,28 +271,36 @@ export default function SettingsPage() {
                 </div>
               ) : (
                 <div className="flex gap-2">
-                  <Button
-                    variant="secondary"
-                    className="flex-1"
-                    onClick={() => {
-                      setPinMode("setting");
-                      setPinMsg(null);
-                    }}
-                  >
-                    {pinOn ? "Change PIN" : "Set a PIN"}
-                  </Button>
-                  {pinOn && (
-                    <Button variant="ghost" className="flex-1" onClick={handleRemovePin}>
-                      Remove
+                  {!vaultOn ? (
+                    <Button
+                      variant="secondary"
+                      className="flex-1"
+                      onClick={() => {
+                        setVaultMode("setting");
+                        setVaultMsg(null);
+                      }}
+                    >
+                      Set up encryption
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="ghost"
+                      className="flex-1"
+                      onClick={handleDisableVault}
+                      disabled={vaultBusy}
+                    >
+                      Turn off encryption
                     </Button>
                   )}
                 </div>
               )}
 
-              {pinMsg && <p className="text-xs text-[#9BA0A6]">{pinMsg}</p>}
-              <p className="text-[11px] text-[#5A5F66]">
-                Locks the app after ~5 minutes idle. This gates access on this
-                device; your private data repo protects the backup itself.
+              {vaultMsg && <p className="text-xs text-[#9BA0A6]">{vaultMsg}</p>}
+              <p className="text-[11px] text-[#5A5F66] leading-relaxed">
+                Encrypts your GitHub backup with your passphrase. On a new device the app
+                asks for it on open, then decrypts your data automatically — no manual
+                restore. There is no recovery: if you forget it, the data can&apos;t be
+                read. Keep an occasional JSON export as your own backstop.
               </p>
             </CardContent>
           </Card>
