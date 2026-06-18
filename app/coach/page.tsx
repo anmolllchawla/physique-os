@@ -9,14 +9,21 @@ import {
   saveWorkoutPlanAsTemplate,
   type WorkoutPlan,
 } from "@/lib/agent";
+import { generateProtocol, saveProtocol } from "@/lib/protocol";
+import type { DailyProtocol } from "@/lib/db";
 import { PageHeader } from "@/components/Layout";
-import { Sparkles, Send, Trash2, ShieldCheck, AlertTriangle, Database, Dumbbell, Check } from "lucide-react";
+import {
+  Sparkles, Send, Trash2, ShieldCheck, AlertTriangle, Database, Dumbbell, Check,
+  ClipboardList, Activity, CalendarRange, CalendarCheck, HelpCircle,
+} from "lucide-react";
 
 interface Msg {
   role: "user" | "assistant";
   content: string;
   plan?: WorkoutPlan; // present when this message is a generated workout
   savedTemplateId?: string; // set once the user saves the plan
+  protocol?: DailyProtocol; // present when this message is a daily protocol
+  protocolSaved?: boolean;
 }
 
 const SUGGESTIONS = [
@@ -160,6 +167,64 @@ export default function CoachPage() {
     }
   };
 
+  const handleGenerateProtocol = async () => {
+    if (loading) return;
+    setError(null);
+    setMessages((m) => [...m, { role: "user", content: "Generate today's protocol" }]);
+    setLoading(true);
+    try {
+      // Works with or without an API key — generateProtocol falls back locally.
+      const protocol = await generateProtocol();
+      setMessages((m) => [
+        ...m,
+        {
+          role: "assistant",
+          content: protocol.summary ?? "Here's your protocol for today.",
+          protocol,
+        },
+      ]);
+    } catch {
+      setError("Couldn't build a protocol. Try again.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSaveProtocol = async (idx: number, protocol: DailyProtocol) => {
+    setSavingIdx(idx);
+    try {
+      await saveProtocol(protocol);
+      setMessages((m) =>
+        m.map((msg, i) => (i === idx ? { ...msg, protocolSaved: true } : msg))
+      );
+    } catch {
+      setError("Couldn't save the protocol.");
+    } finally {
+      setSavingIdx(null);
+    }
+  };
+
+  // Quick coach actions. Protocol is special (local fallback); the rest are
+  // preset chat prompts routed through the normal send().
+  const runAction = (id: string) => {
+    if (id === "protocol") return handleGenerateProtocol();
+    const prompts: Record<string, string> = {
+      adjust: "Adjust today's plan based on my current readiness and recent training.",
+      week: "Review my week — what went well and what to fix.",
+      plan7: "Create a 7-day lifestyle plan covering training, fuel, recovery, and habits.",
+      avoiding: "Based on my data, what am I avoiding or neglecting? Be direct.",
+    };
+    if (prompts[id]) send(prompts[id]);
+  };
+
+  const ACTIONS = [
+    { id: "protocol", label: "Today's Protocol", icon: ClipboardList },
+    { id: "adjust", label: "Adjust for Readiness", icon: Activity },
+    { id: "week", label: "Review My Week", icon: CalendarRange },
+    { id: "plan7", label: "7-Day Plan", icon: CalendarCheck },
+    { id: "avoiding", label: "What Am I Avoiding?", icon: HelpCircle },
+  ];
+
   return (
     <main className="min-h-screen bg-[#08090A] text-[#F2F4F3] flex flex-col">
       <PageHeader
@@ -229,6 +294,27 @@ export default function CoachPage() {
               <p className="text-center text-sm text-[#9BA0A6] mb-5">
                 Ask about your workouts, recovery, bodyweight, or habits.
               </p>
+
+              {/* Quick coach actions */}
+              <div className="grid grid-cols-2 gap-2 mb-3">
+                {ACTIONS.map((a) => {
+                  const Icon = a.icon;
+                  // Protocol works even without an API key (local fallback).
+                  const disabled = configured === false && a.id !== "protocol";
+                  return (
+                    <button
+                      key={a.id}
+                      onClick={() => runAction(a.id)}
+                      disabled={disabled}
+                      className="flex items-center gap-2 rounded-xl bg-[#121316] border border-[#24262C] px-3 py-3 active:bg-[#1B1D22] transition-colors disabled:opacity-40 text-left"
+                    >
+                      <Icon className="w-4 h-4 text-[#C7F23E] shrink-0" />
+                      <span className="text-[13px] font-semibold leading-tight">{a.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+
               <div className="flex flex-col gap-2">
                 {SUGGESTIONS.map((s) => (
                   <button
@@ -241,6 +327,11 @@ export default function CoachPage() {
                   </button>
                 ))}
               </div>
+              {configured === false && (
+                <p className="text-[11px] text-[#5A5F66] text-center mt-3">
+                  No API key set — chat is off, but &ldquo;Today&apos;s Protocol&rdquo; still works using your data.
+                </p>
+              )}
             </div>
           )}
 
@@ -291,6 +382,52 @@ export default function CoachPage() {
                         className="w-full flex items-center justify-center gap-2 h-10 rounded-xl bg-[#C7F23E] text-[#08090A] font-semibold text-sm disabled:opacity-50"
                       >
                         {savingIdx === i ? "Saving…" : "Save as template"}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Generated daily protocol card */}
+              {m.protocol && (
+                <div className="self-start w-[92%] rounded-2xl bg-[#121316] border border-[#C7F23E]/30 overflow-hidden">
+                  <div className="flex items-center gap-2 px-4 py-3 border-b border-[#24262C]">
+                    <ClipboardList className="w-4 h-4 text-[#C7F23E]" />
+                    <p className="font-bold text-sm">Today&apos;s Protocol</p>
+                    <span className="ml-auto text-[10px] font-bold uppercase tracking-wide text-[#5A5F66]">
+                      {m.protocol.source === "ai" ? "AI" : "Local"}
+                    </span>
+                  </div>
+                  <div className="px-4 py-2 flex flex-col divide-y divide-[#1A1C20]">
+                    {m.protocol.tasks.map((t) => (
+                      <div key={t.id} className="flex items-start gap-2 py-2">
+                        <span className="text-[9px] font-bold uppercase tracking-wide text-[#5A5F66] mt-1 w-14 shrink-0">
+                          {t.pillar}
+                        </span>
+                        <div className="min-w-0">
+                          <p className="text-sm">{t.title}</p>
+                          {t.description && (
+                            <p className="text-[11px] text-[#5A5F66] mt-0.5">{t.description}</p>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="px-4 py-3 border-t border-[#24262C]">
+                    {m.protocolSaved ? (
+                      <button
+                        onClick={() => router.push("/")}
+                        className="w-full flex items-center justify-center gap-2 h-10 rounded-xl bg-[#36D399]/15 text-[#36D399] font-semibold text-sm"
+                      >
+                        <Check className="w-4 h-4" /> Saved — see it on your dashboard
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => handleSaveProtocol(i, m.protocol!)}
+                        disabled={savingIdx === i}
+                        className="w-full flex items-center justify-center gap-2 h-10 rounded-xl bg-[#C7F23E] text-[#08090A] font-semibold text-sm disabled:opacity-50"
+                      >
+                        {savingIdx === i ? "Saving…" : "Save protocol"}
                       </button>
                     )}
                   </div>

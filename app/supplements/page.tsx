@@ -14,7 +14,6 @@ import { todayISO, formatDateShort } from "@/lib/utils";
 import { PageHeader, Section, Pill, EmptyState } from "@/components/Layout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { BottomNav } from "@/components/BottomNav";
 import { Pill as PillIcon, Plus, X, Check, Pencil } from "lucide-react";
 
 const CATEGORIES: { key: Supplement["category"]; label: string; color: string }[] = [
@@ -308,8 +307,6 @@ export default function SupplementsPage() {
           Talk to a qualified professional about anything you take.
         </p>
       </div>
-
-      <BottomNav />
     </main>
   );
 }

@@ -41,6 +41,7 @@ export default function CheckInPage() {
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isEditing, setIsEditing] = useState(false);
 
   useEffect(() => {
     seedIfNeeded().then(() => setSeeded(true));
@@ -101,6 +102,7 @@ export default function CheckInPage() {
         appetite: 3,
       });
       setNotes("");
+      setIsEditing(false);
     } catch (e) {
       console.error("Failed to save check-in:", e);
       setError("Save failed. Try again.");
@@ -109,6 +111,7 @@ export default function CheckInPage() {
     }
   }, [sleepHours, ratings, notes, today]);
 
+  // Explicit delete for the check-in HISTORY list (not used by the edit flow).
   const handleDelete = useCallback(async (id: string) => {
     try {
       await db.dailyCheckins.delete(id);
@@ -138,7 +141,7 @@ export default function CheckInPage() {
         </div>
 
         {/* Today's Check-In Result */}
-        {todayCheckin && scoreInfo && (
+        {todayCheckin && scoreInfo && !isEditing && (
           <Card className="bg-[#121316] border-[#24262C]">
             <CardContent className="p-5 flex items-center gap-5">
               <div
@@ -177,7 +180,7 @@ export default function CheckInPage() {
         )}
 
         {/* Check-In Form */}
-        {!todayCheckin && (
+        {(!todayCheckin || isEditing) && (
           <Card className="bg-[#121316] border-[#24262C]">
             <CardContent className="p-4 flex flex-col gap-4">
               <p className="text-sm font-semibold text-[#D6D9D6]">
@@ -230,26 +233,38 @@ export default function CheckInPage() {
                 <p className="text-xs text-[#F2555A] font-medium">{error}</p>
               )}
 
-              <Button
-                onClick={handleSubmit}
-                disabled={saving || !sleepHours}
-                className="w-full"
-              >
-                <ClipboardList className="w-4 h-4 mr-2" />
-                {saving ? "Saving..." : "Save Check-In"}
-              </Button>
+              <div className="flex gap-2">
+                <Button
+                  onClick={handleSubmit}
+                  disabled={saving || !sleepHours}
+                  className="flex-1"
+                >
+                  <ClipboardList className="w-4 h-4 mr-2" />
+                  {saving ? "Saving..." : isEditing ? "Update" : "Save Check-In"}
+                </Button>
+                {isEditing && (
+                  <Button
+                    variant="ghost"
+                    onClick={() => setIsEditing(false)}
+                    disabled={saving}
+                    className="flex-1"
+                  >
+                    Cancel
+                  </Button>
+                )}
+              </div>
             </CardContent>
           </Card>
         )}
 
         {/* Re-Check Button */}
-        {todayCheckin && (
+        {todayCheckin && !isEditing && (
           <Button
             variant="ghost"
             size="sm"
             onClick={() => {
-              // Simulate re-check by clearing today's existing so form re-shows.
-              // We don't actually delete — form replaces on put().
+              // Prefill the form from today's record and switch to editing.
+              // We do NOT delete — saving upserts the same record.
               setSleepHours(String(todayCheckin.sleep_hours ?? ""));
               setRatings({
                 sleep_quality: todayCheckin.sleep_quality ?? 3,
@@ -260,8 +275,7 @@ export default function CheckInPage() {
                 appetite: todayCheckin.appetite ?? 3,
               });
               setNotes(todayCheckin.notes ?? "");
-              // Delete the old one so the form shows
-              handleDelete(todayCheckin.id);
+              setIsEditing(true);
             }}
             className="self-start"
           >

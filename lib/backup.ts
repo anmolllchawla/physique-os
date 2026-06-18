@@ -28,6 +28,9 @@ export interface Snapshot {
     progressPhotos: unknown[];
     supplements: unknown[];
     supplementLogs: unknown[];
+    fuelLogs: unknown[];
+    dailyProtocols: unknown[];
+    safeSettings: unknown[];
   };
 }
 
@@ -44,6 +47,9 @@ export async function buildSnapshot(): Promise<Snapshot> {
     progressPhotos,
     supplements,
     supplementLogs,
+    fuelLogs,
+    dailyProtocols,
+    allSettings,
   ] = await Promise.all([
     db.exercises.toArray(),
     db.workoutTemplates.toArray(),
@@ -56,7 +62,16 @@ export async function buildSnapshot(): Promise<Snapshot> {
     db.progressPhotos.toArray(),
     db.supplements.toArray(),
     db.supplementLogs.toArray(),
+    db.fuelLogs.toArray(),
+    db.dailyProtocols.toArray(),
+    db.settings.toArray(),
   ]);
+
+  // Back up only non-secret settings (units, name, reminders). Never the PIN.
+  const SECRET_KEYS = new Set(["pin_hash", "pin_salt"]);
+  const safeSettings = (allSettings as { key: string }[]).filter(
+    (row) => !SECRET_KEYS.has(row.key)
+  );
 
   return {
     app: "physiqueos",
@@ -74,6 +89,9 @@ export async function buildSnapshot(): Promise<Snapshot> {
       progressPhotos,
       supplements,
       supplementLogs,
+      fuelLogs,
+      dailyProtocols,
+      safeSettings,
     },
   };
 }
@@ -97,6 +115,9 @@ export async function restoreSnapshot(snap: Snapshot, mode: "replace" | "merge" 
       db.progressPhotos,
       db.supplements,
       db.supplementLogs,
+      db.fuelLogs,
+      db.dailyProtocols,
+      db.settings,
     ],
     async () => {
       if (mode === "replace") {
@@ -112,6 +133,8 @@ export async function restoreSnapshot(snap: Snapshot, mode: "replace" | "merge" 
           db.progressPhotos.clear(),
           db.supplements.clear(),
           db.supplementLogs.clear(),
+          db.fuelLogs.clear(),
+          db.dailyProtocols.clear(),
         ]);
       }
       // bulkPut is an upsert — safe for both replace and merge.
@@ -126,6 +149,12 @@ export async function restoreSnapshot(snap: Snapshot, mode: "replace" | "merge" 
       await db.progressPhotos.bulkPut((d.progressPhotos ?? []) as never[]);
       await db.supplements.bulkPut((d.supplements ?? []) as never[]);
       await db.supplementLogs.bulkPut((d.supplementLogs ?? []) as never[]);
+      await db.fuelLogs.bulkPut((d.fuelLogs ?? []) as never[]);
+      await db.dailyProtocols.bulkPut((d.dailyProtocols ?? []) as never[]);
+      // Restore only safe settings; never overwrite the local PIN.
+      if (Array.isArray(d.safeSettings)) {
+        await db.settings.bulkPut(d.safeSettings as never[]);
+      }
     }
   );
 }

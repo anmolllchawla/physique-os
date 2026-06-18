@@ -10,7 +10,6 @@ import { formatDateShort, formatDuration, displayWeight, toLbs } from "@/lib/uti
 import { PageHeader, Section, StatTile, EmptyState } from "@/components/Layout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { BottomNav } from "@/components/BottomNav";
 import { Dumbbell, Pencil, Trash2, Check, X } from "lucide-react";
 
 export default function HistoryDetailPage() {
@@ -269,8 +268,6 @@ export default function HistoryDetailPage() {
           )}
         </Section>
       </div>
-
-      <BottomNav />
     </main>
   );
 }

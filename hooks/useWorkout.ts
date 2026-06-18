@@ -6,6 +6,7 @@
 import { useLiveQuery } from "dexie-react-hooks";
 import { db, type Exercise, type WorkoutTemplate, type TemplateExercise, type ExerciseLog } from "@/lib/db";
 import { generateId } from "@/lib/utils";
+import type { ActiveWorkout } from "@/lib/progression";
 
 // ── Templates ──────────────────────────────────
 
@@ -231,4 +232,47 @@ export async function getLastPerformance(
 
   const sets = (bySession.get(target.id) ?? []).sort((a, b) => a.set_number - b.set_number);
   return { date: target.started_at, sets };
+}
+
+// Start a new workout session from a template. Creates the DB session and
+// returns the ActiveWorkout object + sessionId. Shared by the workout hub and
+// the dashboard so "Start" behaves identically everywhere.
+export async function startSessionFromTemplate(
+  templateId: string
+): Promise<{ sessionId: string; active: ActiveWorkout } | null> {
+  const data = await loadTemplateForSession(templateId);
+  if (!data) return null;
+
+  const sessionId = generateId();
+  const startedAt = new Date().toISOString();
+  await db.workoutSessions.add({
+    id: sessionId,
+    template_id: templateId,
+    name: data.template.name,
+    category: data.template.category,
+    started_at: startedAt,
+    completed_at: null,
+    duration_sec: null,
+    notes: null,
+  });
+
+  const active: ActiveWorkout = {
+    session_id: sessionId,
+    template_id: templateId,
+    name: data.template.name,
+    category: data.template.category,
+    started_at: startedAt,
+    exercises: data.exercises.map((te) => ({
+      exercise_id: te.exercise_id,
+      exercise_name: te.exercise?.name ?? "Exercise",
+      target_sets: te.target_sets,
+      target_reps: te.target_reps,
+      rest_seconds: te.rest_seconds,
+      rpe_target: te.rpe_target,
+      sets: [],
+    })),
+    current_exercise_index: 0,
+  };
+
+  return { sessionId, active };
 }

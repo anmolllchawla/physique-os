@@ -32,6 +32,7 @@ import {
   Check,
   AlertTriangle,
   Lock,
+  Bell,
 } from "lucide-react";
 import { isPinSet, setPin as savePin, removePin } from "@/lib/lock";
 
@@ -267,6 +268,24 @@ export default function SettingsPage() {
               </p>
             </CardContent>
           </Card>
+        </section>
+
+        {/* Units */}
+        <section className="flex flex-col gap-3">
+          <p className="text-xs font-semibold text-[#9BA0A6] uppercase tracking-wider px-1">
+            Notifications
+          </p>
+          <Link href="/settings/reminders">
+            <Card className="bg-[#121316] border-[#24262C] active:bg-[#1B1D22] transition-colors">
+              <CardContent className="p-4 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Bell className="w-4 h-4 text-[#9BA0A6]" />
+                  <span className="text-sm font-medium">Daily reminders</span>
+                </div>
+                <span className="text-[#5A5F66] text-lg">›</span>
+              </CardContent>
+            </Card>
+          </Link>
         </section>
 
         {/* Units */}

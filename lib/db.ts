@@ -135,6 +135,48 @@ export interface SupplementLog {
   created_at: string;
 }
 
+// Daily fuel/nutrition log — one record per day (date-keyed).
+export interface FuelLog {
+  id: string;
+  date: string;
+  protein_target_g: number;
+  protein_g: number;
+  calories_target: number;
+  calories: number;
+  water_target_ml: number;
+  water_ml: number;
+  notes: string | null;
+  created_at: string;
+}
+
+export type ProtocolPillar =
+  | "training"
+  | "fuel"
+  | "water"
+  | "recovery"
+  | "supplements"
+  | "mindset"
+  | "presence"
+  | "career";
+
+export interface ProtocolTask {
+  id: string;
+  pillar: ProtocolPillar;
+  title: string;
+  description?: string;
+  completed: boolean;
+}
+
+// A generated daily protocol — one per day (date-keyed).
+export interface DailyProtocol {
+  id: string;
+  date: string;
+  source: "ai" | "local";
+  summary: string | null;
+  tasks: ProtocolTask[];
+  created_at: string;
+}
+
 export interface Setting {
   key: string;
   value: string;
@@ -152,6 +194,8 @@ export class PhysiqueDB extends Dexie {
   progressPhotos!: Table<ProgressPhoto, string>;
   supplements!: Table<Supplement, string>;
   supplementLogs!: Table<SupplementLog, string>;
+  fuelLogs!: Table<FuelLog, string>;
+  dailyProtocols!: Table<DailyProtocol, string>;
   settings!: Table<Setting, string>;
 
   constructor() {
@@ -202,6 +246,24 @@ export class PhysiqueDB extends Dexie {
       progressPhotos: "id, date, pose",
       supplements: "id, is_active, sort_order",
       supplementLogs: "id, supplement_id, date, [supplement_id+date]",
+      settings: "key",
+    });
+
+    // v4 — Fuel/nutrition logs + daily protocols (lifestyle OS upgrade).
+    this.version(4).stores({
+      exercises: "id, category",
+      workoutTemplates: "id, is_active",
+      templateExercises: "id, template_id, [template_id+sort_order]",
+      workoutSessions: "id, started_at, completed_at",
+      exerciseLogs: "id, session_id, exercise_id, [session_id+created_at]",
+      dailyCheckins: "id, &date",
+      bodyweightLogs: "id, &date",
+      measurements: "id, &date",
+      progressPhotos: "id, date, pose",
+      supplements: "id, is_active, sort_order",
+      supplementLogs: "id, supplement_id, date, [supplement_id+date]",
+      fuelLogs: "id, &date",
+      dailyProtocols: "id, &date",
       settings: "key",
     });
   }

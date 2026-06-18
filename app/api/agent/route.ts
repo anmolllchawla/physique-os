@@ -62,6 +62,26 @@ Rules:
 - No medical, dosing, or injury-rehab prescriptions. If the user mentions pain or injury, set rationale to advise seeing a professional and keep the plan gentle/general.
 - Output valid JSON only. No text before or after.`;
 
+const PROTOCOL_PROMPT = `You are the daily protocol generator inside PhysiqueOS, a lifestyle operating system. Build the user's plan for TODAY using the provided data summary (readiness, recent training, fuel/protein, supplements). If readiness is low, scale back training and prioritize recovery.
+
+Respond with ONLY a JSON object, no prose, no markdown fences. Schema:
+{
+  "summary": "string — one or two sentences framing today",
+  "tasks": [
+    {
+      "pillar": "training" | "fuel" | "water" | "recovery" | "supplements" | "mindset" | "presence" | "career",
+      "title": "string — short imperative task",
+      "description": "string — optional one-line detail"
+    }
+  ]
+}
+
+Rules:
+- Include one task per relevant pillar (6-9 tasks total). Always include training (or active recovery), fuel/protein, water, recovery, mindset.
+- Add ONE lightweight "presence" task (grooming, skincare, outfit/fragrance, posture, dating-photo, or a social-confidence rep) and ONE "career" task (sales follow-up, job outreach, high-income skill, money/admin, or communication rep). Each 5-20 min, concrete.
+- No medical or dosing advice. For supplements just say "take your stack", never doses.
+- Output valid JSON only.`;
+
 // Extremely small in-memory rate guard. Per serverless instance, best-effort.
 // Not a security boundary — just stops accidental rapid-fire loops.
 const WINDOW_MS = 60_000;
@@ -109,7 +129,7 @@ export async function POST(req: NextRequest) {
     message?: string;
     history?: ChatMessage[];
     context?: unknown;
-    intent?: "chat" | "plan";
+    intent?: "chat" | "plan" | "protocol";
     exercise_library?: string[];
   };
   try {
@@ -127,13 +147,15 @@ export async function POST(req: NextRequest) {
   }
 
   const isPlan = body.intent === "plan";
+  const isProtocol = body.intent === "protocol";
+  const wantsJson = isPlan || isProtocol;
   const model = process.env.DEEPSEEK_MODEL || "deepseek-chat";
   const baseUrl = process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com";
 
   // Build the message list. Context (if the user opted in) is injected as a
   // system message so the model treats it as ground-truth data, not user text.
   const messages: { role: string; content: string }[] = [
-    { role: "system", content: isPlan ? PLAN_PROMPT : SYSTEM_PROMPT },
+    { role: "system", content: isProtocol ? PROTOCOL_PROMPT : isPlan ? PLAN_PROMPT : SYSTEM_PROMPT },
   ];
 
   // In plan mode, give the model the user's existing exercise library so it
@@ -179,10 +201,10 @@ export async function POST(req: NextRequest) {
       body: JSON.stringify({
         model,
         messages,
-        temperature: isPlan ? 0.4 : 0.6,
-        max_tokens: isPlan ? 1200 : 900,
+        temperature: wantsJson ? 0.4 : 0.6,
+        max_tokens: wantsJson ? 1200 : 900,
         stream: false,
-        ...(isPlan ? { response_format: { type: "json_object" } } : {}),
+        ...(wantsJson ? { response_format: { type: "json_object" } } : {}),
       }),
       signal: controller.signal,
     });

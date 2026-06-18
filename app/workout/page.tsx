@@ -5,9 +5,8 @@ import { useRouter } from "next/navigation";
 import { useTemplates, useRecentSessions } from "@/hooks/useWorkout";
 import { useActiveSession } from "@/hooks/useWorkout";
 import { useWorkoutStore } from "@/store/useWorkoutStore";
-import { loadTemplateForSession } from "@/hooks/useWorkout";
-import { generateId, formatDateShort, formatDuration } from "@/lib/utils";
-import type { ActiveWorkout } from "@/lib/progression";
+import { startSessionFromTemplate } from "@/hooks/useWorkout";
+import { formatDateShort, formatDuration } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -40,37 +39,10 @@ export default function WorkoutHubPage() {
   } : null);
 
   const handleStart = async (templateId: string) => {
-    const data = await loadTemplateForSession(templateId);
-    if (!data) return;
-
-    const sessionId = generateId();
-    await (await import("@/lib/db")).db.workoutSessions.add({
-      id: sessionId, template_id: templateId,
-      name: data.template.name, category: data.template.category,
-      started_at: new Date().toISOString(),
-      completed_at: null, duration_sec: null, notes: null,
-    });
-
-    const active: ActiveWorkout = {
-      session_id: sessionId,
-      template_id: templateId,
-      name: data.template.name,
-      category: data.template.category,
-      started_at: new Date().toISOString(),
-      exercises: data.exercises.map((te) => ({
-        exercise_id: te.exercise_id,
-        exercise_name: te.exercise?.name ?? "Exercise",
-        target_sets: te.target_sets,
-        target_reps: te.target_reps,
-        rest_seconds: te.rest_seconds,
-        rpe_target: te.rpe_target,
-        sets: [],
-      })),
-      current_exercise_index: 0,
-    };
-
-    store.startWorkout(active);
-    router.push(`/workout/${sessionId}`);
+    const result = await startSessionFromTemplate(templateId);
+    if (!result) return;
+    store.startWorkout(result.active);
+    router.push(`/workout/${result.sessionId}`);
   };
 
   return (

@@ -8,7 +8,6 @@ import { useSupplementLogs, deleteSupplement, updateSupplement, toggleSupplement
 import { todayISO, formatDateShort } from "@/lib/utils";
 import { PageHeader, Section, StatTile, Pill } from "@/components/Layout";
 import { Button } from "@/components/ui/button";
-import { BottomNav } from "@/components/BottomNav";
 import { Trash2, Archive } from "lucide-react";
 
 const CAT_COLOR: Record<string, string> = {
@@ -167,8 +166,6 @@ export default function SupplementDetailPage() {
           </div>
         </Section>
       </div>
-
-      <BottomNav />
     </main>
   );
 }

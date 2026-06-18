@@ -12,7 +12,6 @@ import { formatDateShort, formatDuration, displayWeight } from "@/lib/utils";
 import { readinessLabel } from "@/lib/scoring";
 import { PageHeader, Section, StatTile } from "@/components/Layout";
 import { Button } from "@/components/ui/button";
-import { BottomNav } from "@/components/BottomNav";
 import { ChevronLeft, ChevronRight, Sparkles, ArrowRight } from "lucide-react";
 
 function endOfWeekLabel(startISO: string): string {
@@ -226,8 +225,6 @@ export default function WeeklyReviewPage() {
           </>
         )}
       </div>
-
-      <BottomNav />
     </main>
   );
 }
