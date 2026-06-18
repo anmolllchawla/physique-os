@@ -3,6 +3,7 @@
 
 import { db } from "./db";
 import { generateId } from "./utils";
+import { DEFAULT_STACK_ITEMS } from "./stackSafety";
 
 const EXERCISES = [
   { name: "Barbell Bench Press", category: "push" as const, primary_muscle: "Chest", equipment: "Barbell" },
@@ -159,6 +160,7 @@ export async function seedIfNeeded(): Promise<void> {
     // (matched by name) without disturbing the user's custom exercises.
     await topUpExercises();
     await removeSeededTemplatesOnce();
+    await seedStackItemsOnce();
     return;
   }
 
@@ -176,6 +178,30 @@ export async function seedIfNeeded(): Promise<void> {
   // AI coach, and completed workouts auto-delete their template. The exercise
   // library above is still seeded so the coach and custom builder have options.
   await markSeededTemplatesRemoved();
+  await seedStackItemsOnce();
+}
+
+// Seed the default Stack Monitor items once (only if the user has none and
+// hasn't dismissed seeding). Guarded by a flag so we never re-add deleted ones.
+async function seedStackItemsOnce(): Promise<void> {
+  const flag = await db.settings.get("stack_seeded");
+  if (flag?.value === "true") return;
+  const count = await db.stackItems.count();
+  if (count === 0) {
+    const now = new Date().toISOString();
+    await db.stackItems.bulkAdd(
+      DEFAULT_STACK_ITEMS.map((it) => ({
+        id: generateId(),
+        name: it.name,
+        category: it.category,
+        route: it.route,
+        active: true,
+        createdAt: now,
+      }))
+    );
+    console.log(`[Seed] Seeded ${DEFAULT_STACK_ITEMS.length} stack items`);
+  }
+  await db.settings.put({ key: "stack_seeded", value: "true" });
 }
 
 // One-time cleanup: remove the original 3 default templates (Push/Pull/Legs

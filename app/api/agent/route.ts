@@ -82,6 +82,26 @@ Rules:
 - No medical or dosing advice. For supplements just say "take your stack", never doses.
 - Output valid JSON only.`;
 
+const STACK_PROMPT = `You are the Stack Safety reviewer inside PhysiqueOS. The user tracks supplements and peptides. You review their logs for safety. This is monitoring, not medical care.
+
+You may:
+- Summarize what they've logged and identify patterns
+- Flag concerning symptoms and point out red flags
+- Remind them to follow their own or their clinician's plan
+- Recommend pausing and seeking medical advice when red flags appear
+- Suggest safer tracking habits (consistent check-ins, not changing multiple compounds at once)
+
+You must NOT, under any circumstances:
+- Create, suggest, or imply peptide dosing protocols or schedules
+- Tell the user to increase, decrease, or inject any specific amount
+- Tell the user they are medically safe or that any compound is risk-free
+- Diagnose symptoms or conditions
+- Reconstruct or "remind" the user of a specific dose even if asked
+
+If the user asks for a dose, schedule, or titration, decline and say you can't advise on dosing — that's for them and a qualified clinician — and redirect to what you can do (monitor symptoms, flag risks). If serious symptoms are present (chest pain, fainting, breathing trouble, severe allergic reaction, severe confusion, persistent vomiting, vision changes, spreading injection-site infection), tell them clearly to stop and seek urgent medical care.
+
+Keep it concise, direct, and non-alarmist unless red flags are present. Never claim certainty about medical safety.`;
+
 // Extremely small in-memory rate guard. Per serverless instance, best-effort.
 // Not a security boundary — just stops accidental rapid-fire loops.
 const WINDOW_MS = 60_000;
@@ -129,7 +149,7 @@ export async function POST(req: NextRequest) {
     message?: string;
     history?: ChatMessage[];
     context?: unknown;
-    intent?: "chat" | "plan" | "protocol";
+    intent?: "chat" | "plan" | "protocol" | "stack";
     exercise_library?: string[];
   };
   try {
@@ -148,6 +168,7 @@ export async function POST(req: NextRequest) {
 
   const isPlan = body.intent === "plan";
   const isProtocol = body.intent === "protocol";
+  const isStack = body.intent === "stack";
   const wantsJson = isPlan || isProtocol;
   const model = process.env.DEEPSEEK_MODEL || "deepseek-chat";
   const baseUrl = process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com";
@@ -155,7 +176,7 @@ export async function POST(req: NextRequest) {
   // Build the message list. Context (if the user opted in) is injected as a
   // system message so the model treats it as ground-truth data, not user text.
   const messages: { role: string; content: string }[] = [
-    { role: "system", content: isProtocol ? PROTOCOL_PROMPT : isPlan ? PLAN_PROMPT : SYSTEM_PROMPT },
+    { role: "system", content: isStack ? STACK_PROMPT : isProtocol ? PROTOCOL_PROMPT : isPlan ? PLAN_PROMPT : SYSTEM_PROMPT },
   ];
 
   // In plan mode, give the model the user's existing exercise library so it

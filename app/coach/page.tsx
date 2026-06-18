@@ -214,7 +214,49 @@ export default function CoachPage() {
       plan7: "Create a 7-day lifestyle plan covering training, fuel, recovery, and habits.",
       avoiding: "Based on my data, what am I avoiding or neglecting? Be direct.",
     };
-    if (prompts[id]) send(prompts[id]);
+    const stackPrompts: Record<string, string> = {
+      stack_review: "Review my stack logs — summarize what I'm taking and any patterns.",
+      stack_sides: "What side effects or symptoms are showing up in my logs?",
+      stack_pause: "Based on my logs, should I consider pausing anything? Flag risks.",
+      stack_risk: "Give me a stack risk review based on my symptoms and check-ins.",
+    };
+    if (prompts[id]) {
+      send(prompts[id]);
+    } else if (stackPrompts[id]) {
+      sendStack(stackPrompts[id]);
+    }
+  };
+
+  // Stack review goes through the guarded "stack" intent with stack context.
+  const sendStack = async (message: string) => {
+    if (loading) return;
+    setError(null);
+    setMessages((m) => [...m, { role: "user", content: message }]);
+    setLoading(true);
+    try {
+      const { buildStackContext } = await import("@/lib/agent");
+      let context: unknown = undefined;
+      try {
+        context = await buildStackContext();
+      } catch {
+        context = undefined;
+      }
+      const res = await fetch("/api/agent", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message, intent: "stack", context }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error ?? "Something went wrong.");
+        return;
+      }
+      setMessages((m) => [...m, { role: "assistant", content: data.reply }]);
+    } catch {
+      setError("Couldn't reach the coach. Check your connection.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   const ACTIONS = [
@@ -223,6 +265,10 @@ export default function CoachPage() {
     { id: "week", label: "Review My Week", icon: CalendarRange },
     { id: "plan7", label: "7-Day Plan", icon: CalendarCheck },
     { id: "avoiding", label: "What Am I Avoiding?", icon: HelpCircle },
+    { id: "stack_review", label: "Review My Stack", icon: ClipboardList },
+    { id: "stack_sides", label: "Side Effects Showing Up?", icon: Activity },
+    { id: "stack_pause", label: "Should I Pause Anything?", icon: HelpCircle },
+    { id: "stack_risk", label: "Stack Risk Review", icon: Activity },
   ];
 
   return (

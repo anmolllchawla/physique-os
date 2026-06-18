@@ -182,6 +182,58 @@ export interface Setting {
   value: string;
 }
 
+// ── Stack Monitor (supplements/peptides safety tracking) ──
+// Safety/monitoring only. The app stores user-entered dose text verbatim and
+// never originates doses, schedules, or titration for any compound.
+
+export type StackCategory = "peptide" | "supplement" | "medication" | "skincare" | "other";
+export type StackRoute = "oral" | "nasal" | "topical" | "injectable" | "other";
+
+export interface StackItem {
+  id: string;
+  name: string;
+  category: StackCategory;
+  route: StackRoute;
+  active: boolean;
+  userEnteredPlan?: string; // user/clinician plan text — never AI-generated
+  notes?: string;
+  createdAt: string;
+}
+
+export interface StackLog {
+  id: string;
+  stackItemId: string;
+  date: string;
+  time?: string;
+  doseText?: string; // user-entered ONLY
+  taken: boolean;
+  symptoms?: string[];
+  perceivedBenefits?: string[];
+  notes?: string;
+}
+
+export interface StackSafetyCheckIn {
+  id: string;
+  date: string;
+  symptoms: string[];
+  injectionSiteIssues?: string[];
+  mood?: number;
+  anxiety?: number;
+  sleepQuality?: number;
+  appetite?: number;
+  energy?: number;
+  notes?: string;
+}
+
+export interface LabMarker {
+  id: string;
+  name: string;
+  value: string;
+  unit?: string;
+  date: string;
+  notes?: string;
+}
+
 export class PhysiqueDB extends Dexie {
   exercises!: Table<Exercise, string>;
   workoutTemplates!: Table<WorkoutTemplate, string>;
@@ -196,6 +248,10 @@ export class PhysiqueDB extends Dexie {
   supplementLogs!: Table<SupplementLog, string>;
   fuelLogs!: Table<FuelLog, string>;
   dailyProtocols!: Table<DailyProtocol, string>;
+  stackItems!: Table<StackItem, string>;
+  stackLogs!: Table<StackLog, string>;
+  stackCheckIns!: Table<StackSafetyCheckIn, string>;
+  labMarkers!: Table<LabMarker, string>;
   settings!: Table<Setting, string>;
 
   constructor() {
@@ -264,6 +320,28 @@ export class PhysiqueDB extends Dexie {
       supplementLogs: "id, supplement_id, date, [supplement_id+date]",
       fuelLogs: "id, &date",
       dailyProtocols: "id, &date",
+      settings: "key",
+    });
+
+    // v5 — Stack Monitor: supplements/peptides safety tracking + labs.
+    this.version(5).stores({
+      exercises: "id, category",
+      workoutTemplates: "id, is_active",
+      templateExercises: "id, template_id, [template_id+sort_order]",
+      workoutSessions: "id, started_at, completed_at",
+      exerciseLogs: "id, session_id, exercise_id, [session_id+created_at]",
+      dailyCheckins: "id, &date",
+      bodyweightLogs: "id, &date",
+      measurements: "id, &date",
+      progressPhotos: "id, date, pose",
+      supplements: "id, is_active, sort_order",
+      supplementLogs: "id, supplement_id, date, [supplement_id+date]",
+      fuelLogs: "id, &date",
+      dailyProtocols: "id, &date",
+      stackItems: "id, active, category",
+      stackLogs: "id, stackItemId, date, [stackItemId+date]",
+      stackCheckIns: "id, &date",
+      labMarkers: "id, name, date",
       settings: "key",
     });
   }

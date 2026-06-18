@@ -33,6 +33,10 @@ export interface Snapshot {
     fuelLogs: unknown[];
     dailyProtocols: unknown[];
     safeSettings: unknown[];
+    stackItems: unknown[];
+    stackLogs: unknown[];
+    stackCheckIns: unknown[];
+    labMarkers: unknown[];
   };
 }
 
@@ -51,6 +55,10 @@ export async function buildSnapshot(): Promise<Snapshot> {
     supplementLogs,
     fuelLogs,
     dailyProtocols,
+    stackItems,
+    stackLogs,
+    stackCheckIns,
+    labMarkers,
     allSettings,
   ] = await Promise.all([
     db.exercises.toArray(),
@@ -66,6 +74,10 @@ export async function buildSnapshot(): Promise<Snapshot> {
     db.supplementLogs.toArray(),
     db.fuelLogs.toArray(),
     db.dailyProtocols.toArray(),
+    db.stackItems.toArray(),
+    db.stackLogs.toArray(),
+    db.stackCheckIns.toArray(),
+    db.labMarkers.toArray(),
     db.settings.toArray(),
   ]);
 
@@ -93,6 +105,10 @@ export async function buildSnapshot(): Promise<Snapshot> {
       supplementLogs,
       fuelLogs,
       dailyProtocols,
+      stackItems,
+      stackLogs,
+      stackCheckIns,
+      labMarkers,
       safeSettings,
     },
   };
@@ -119,6 +135,10 @@ export async function restoreSnapshot(snap: Snapshot, mode: "replace" | "merge" 
       db.supplementLogs,
       db.fuelLogs,
       db.dailyProtocols,
+      db.stackItems,
+      db.stackLogs,
+      db.stackCheckIns,
+      db.labMarkers,
       db.settings,
     ],
     async () => {
@@ -137,6 +157,10 @@ export async function restoreSnapshot(snap: Snapshot, mode: "replace" | "merge" 
           db.supplementLogs.clear(),
           db.fuelLogs.clear(),
           db.dailyProtocols.clear(),
+          db.stackItems.clear(),
+          db.stackLogs.clear(),
+          db.stackCheckIns.clear(),
+          db.labMarkers.clear(),
         ]);
       }
       // bulkPut is an upsert — safe for both replace and merge.
@@ -153,6 +177,10 @@ export async function restoreSnapshot(snap: Snapshot, mode: "replace" | "merge" 
       await db.supplementLogs.bulkPut((d.supplementLogs ?? []) as never[]);
       await db.fuelLogs.bulkPut((d.fuelLogs ?? []) as never[]);
       await db.dailyProtocols.bulkPut((d.dailyProtocols ?? []) as never[]);
+      await db.stackItems.bulkPut((d.stackItems ?? []) as never[]);
+      await db.stackLogs.bulkPut((d.stackLogs ?? []) as never[]);
+      await db.stackCheckIns.bulkPut((d.stackCheckIns ?? []) as never[]);
+      await db.labMarkers.bulkPut((d.labMarkers ?? []) as never[]);
       // Restore only safe settings; never overwrite the local PIN.
       if (Array.isArray(d.safeSettings)) {
         await db.settings.bulkPut(d.safeSettings as never[]);

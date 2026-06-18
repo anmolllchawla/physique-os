@@ -476,3 +476,41 @@ export async function saveWorkoutPlanAsTemplate(plan: WorkoutPlan): Promise<stri
 
   return templateId;
 }
+
+// ── Stack safety context (for the Coach's stack-review actions) ──
+// Summarizes the user's stack logs/symptoms/labs and the LOCAL safety score.
+// We pass user-entered dose text through verbatim but never originate doses.
+export async function buildStackContext(): Promise<unknown> {
+  const { db } = await import("./db");
+  const { computeStackSafety } = await import("./stackSafety");
+  const cutoff = new Date(Date.now() - 14 * 86400000).toISOString().slice(0, 10);
+  const today = new Date().toISOString().slice(0, 10);
+
+  const [items, logs, checkIns, labs] = await Promise.all([
+    db.stackItems.toArray(),
+    db.stackLogs.filter((l) => l.date >= cutoff).toArray(),
+    db.stackCheckIns.filter((c) => c.date >= cutoff).toArray(),
+    db.labMarkers.orderBy("date").reverse().limit(20).toArray(),
+  ]);
+
+  const safety = computeStackSafety({ items, recentLogs: logs, recentCheckIns: checkIns, todayISO: today });
+
+  return {
+    generated_at: new Date().toISOString(),
+    safety_score: safety.score,
+    safety_state: safety.state,
+    red_flags: safety.redFlags,
+    reasons: safety.reasons,
+    active_items: items
+      .filter((i) => i.active)
+      .map((i) => ({ name: i.name, category: i.category, route: i.route, user_plan: i.userEnteredPlan ?? null })),
+    recent_symptoms: Array.from(
+      new Set([
+        ...logs.flatMap((l) => l.symptoms ?? []),
+        ...checkIns.flatMap((c) => c.symptoms ?? []),
+      ])
+    ),
+    injection_site_issues: Array.from(new Set(checkIns.flatMap((c) => c.injectionSiteIssues ?? []))),
+    recent_labs: labs.map((m) => ({ name: m.name, value: m.value, unit: m.unit ?? null, date: m.date })),
+  };
+}

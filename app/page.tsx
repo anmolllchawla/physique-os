@@ -7,6 +7,7 @@ import { useRouter } from "next/navigation";
 import { db } from "@/lib/db";
 import { seedIfNeeded } from "@/lib/seed";
 import { startSessionFromTemplate } from "@/hooks/useWorkout";
+import { useStackSafety } from "@/hooks/useStack";
 import { useWorkoutStore } from "@/store/useWorkoutStore";
 import { todayISO, displayWeight } from "@/lib/utils";
 import { readinessLabel } from "@/lib/scoring";
@@ -74,12 +75,12 @@ export default function DashboardPage() {
     [seeded]
   );
   const templates = useLiveQuery(() => db.workoutTemplates.toArray(), [seeded]);
-  const activeSupps = useLiveQuery(
-    () => db.supplements.filter((s) => s.is_active).toArray(),
+  const stackItems = useLiveQuery(
+    () => db.stackItems.filter((s) => s.active).toArray(),
     [seeded]
   );
-  const suppLogsToday = useLiveQuery(
-    () => db.supplementLogs.where("date").equals(today).toArray(),
+  const stackLogsToday = useLiveQuery(
+    () => db.stackLogs.where("date").equals(today).toArray(),
     [today, seeded]
   );
   const fuel = useLiveQuery(() => db.fuelLogs.where("date").equals(today).first(), [today, seeded]);
@@ -94,6 +95,7 @@ export default function DashboardPage() {
         .first(),
     [today, seeded]
   );
+  const stackSafety = useStackSafety();
 
   const latestWeight = weightLogs?.[0] ?? null;
   const previousWeight = weightLogs?.[1] ?? null;
@@ -103,9 +105,9 @@ export default function DashboardPage() {
   const score = checkin?.readiness_score ?? null;
   const scoreInfo = score != null ? readinessLabel(score) : null;
 
-  const suppTaken = new Set((suppLogsToday ?? []).filter((l) => l.taken).map((l) => l.supplement_id));
-  const suppDone = (activeSupps ?? []).filter((s) => suppTaken.has(s.id)).length;
-  const suppTotal = activeSupps?.length ?? 0;
+  const stackTakenToday = (stackLogsToday ?? []).filter((l) => l.taken).length;
+  const suppTotal = stackItems?.length ?? 0;
+  const suppDone = stackTakenToday;
 
   // ── Lifestyle Score (computed from today's data, graceful with gaps) ──
   const proteinHit = !!fuel && fuel.protein_g >= fuel.protein_target_g;
@@ -460,27 +462,33 @@ export default function DashboardPage() {
           </Section>
         )}
 
-        {/* Supplements today */}
-        {suppTotal > 0 && (
-          <Link href="/supplements">
-            <div className="rounded-2xl bg-[#121316] border border-[#24262C] p-4 flex items-center justify-between active:bg-[#1B1D22] transition-colors">
-              <div className="flex items-center gap-3">
-                <div className="grid place-items-center h-10 w-10 rounded-full bg-[#1B1D22]">
-                  <Pill className="w-5 h-5 text-[#A78BFA]" />
-                </div>
-                <div>
-                  <p className="font-semibold text-sm">Supplements</p>
-                  <p className="text-xs text-[#5A5F66]">
-                    {suppDone} of {suppTotal} taken today
-                  </p>
-                </div>
+        {/* Stack Monitor */}
+        <Link href="/stack">
+          <div
+            className="rounded-2xl bg-[#121316] border p-4 flex items-center justify-between active:bg-[#1B1D22] transition-colors"
+            style={{ borderColor: stackSafety?.hasRedFlag ? "#F2555A" : "#24262C" }}
+          >
+            <div className="flex items-center gap-3">
+              <div className="grid place-items-center h-10 w-10 rounded-full bg-[#1B1D22]">
+                <Pill className="w-5 h-5 text-[#A78BFA]" />
               </div>
-              <span className="text-lg font-extrabold tnums" style={{ color: suppDone === suppTotal ? "#36D399" : "#C7F23E" }}>
-                {Math.round((suppDone / suppTotal) * 100)}%
-              </span>
+              <div>
+                <p className="font-semibold text-sm">Stack Monitor</p>
+                <p className="text-xs text-[#5A5F66]">
+                  {stackTakenToday} logged today
+                </p>
+              </div>
             </div>
-          </Link>
-        )}
+            {stackSafety && (
+              <span
+                className="text-xs font-bold uppercase tracking-wide px-2.5 py-1 rounded-full"
+                style={{ color: stackSafety.color, backgroundColor: stackSafety.color + "1A" }}
+              >
+                {stackSafety.state}
+              </span>
+            )}
+          </div>
+        </Link>
 
         {/* Navigation grid */}
         <Section label="More">
@@ -488,9 +496,6 @@ export default function DashboardPage() {
             <NavCard href="/review" icon={CalendarRange} title="Weekly review" sub="Your week at a glance" color="#C7F23E" />
             <NavCard href="/coach" icon={Sparkles} title="AI coach" sub="Ask about your data" color="#A78BFA" />
             <NavCard href="/progress" icon={Dumbbell} title="Progress" sub="PRs, trends & charts" color="#36D399" />
-            {suppTotal === 0 && (
-              <NavCard href="/supplements" icon={Pill} title="Supplements" sub="Track adherence" color="#F5B83D" />
-            )}
           </div>
         </Section>
       </div>
