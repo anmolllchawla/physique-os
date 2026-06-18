@@ -80,6 +80,12 @@ export function AutoBackup() {
       db.workoutTemplates,
       db.templateExercises,
       db.exercises,
+      db.fuelLogs,
+      db.dailyProtocols,
+      db.stackItems,
+      db.stackLogs,
+      db.stackCheckIns,
+      db.labMarkers,
     ] as unknown as AnyTable[];
 
     const handler = () => onChange();
