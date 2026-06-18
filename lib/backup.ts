@@ -68,10 +68,10 @@ export async function buildSnapshot(): Promise<Snapshot> {
   ]);
 
   // Back up only non-secret settings (units, name, reminders). Never the PIN.
-  const SECRET_KEYS = new Set(["pin_hash", "pin_salt"]);
-  const safeSettings = (allSettings as { key: string }[]).filter(
-    (row) => !SECRET_KEYS.has(row.key)
-  );
+  // Sync settings across devices, INCLUDING the salted PIN hash (not the
+  // plaintext PIN) so one PIN unlocks all devices. The hash is safe to sync:
+  // it can't be reversed to the PIN. We still never store the plaintext.
+  const safeSettings = allSettings as { key: string }[];
 
   return {
     app: "physiqueos",

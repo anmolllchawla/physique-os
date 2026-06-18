@@ -43,7 +43,32 @@ async function getExisting(token: string, repo: string, path: string, branch: st
   );
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`GitHub read failed: ${res.status}`);
-  return res.json() as Promise<{ sha: string; content: string; encoding: string }>;
+  return res.json() as Promise<{
+    sha: string;
+    content: string;
+    encoding: string;
+    size: number;
+  }>;
+}
+
+// Fetch file content reliably, even for large files. The Contents API only
+// returns inline `content` for files under ~1MB; above that it comes back
+// empty, so we fetch the blob by its SHA (works up to 100MB).
+async function readFileContent(
+  token: string,
+  repo: string,
+  existing: { sha: string; content: string; encoding: string }
+): Promise<string> {
+  if (existing.content && existing.content.trim().length > 0) {
+    return Buffer.from(existing.content, "base64").toString("utf-8");
+  }
+  const res = await fetch(`${API}/repos/${repo}/git/blobs/${existing.sha}`, {
+    headers: ghHeaders(token),
+    cache: "no-store",
+  });
+  if (!res.ok) throw new Error(`GitHub blob read failed: ${res.status}`);
+  const blob = (await res.json()) as { content: string; encoding: string };
+  return Buffer.from(blob.content, "base64").toString("utf-8");
 }
 
 // GET            → status (configured?, repo, last commit time)
@@ -60,8 +85,20 @@ export async function GET(req: NextRequest) {
     if (action === "pull") {
       const existing = await getExisting(token, repo, path, branch);
       if (!existing) return NextResponse.json({ snapshot: null }, { status: 404 });
-      const json = Buffer.from(existing.content, "base64").toString("utf-8");
-      return NextResponse.json({ snapshot: JSON.parse(json) });
+      const json = await readFileContent(token, repo, existing);
+      if (!json || !json.trim()) {
+        return NextResponse.json({ error: "Backup file is empty." }, { status: 502 });
+      }
+      let snapshot: unknown;
+      try {
+        snapshot = JSON.parse(json);
+      } catch {
+        return NextResponse.json(
+          { error: "Backup file is not valid JSON." },
+          { status: 502 }
+        );
+      }
+      return NextResponse.json({ snapshot });
     }
 
     // status
