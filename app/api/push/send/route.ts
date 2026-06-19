@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import webpush from "web-push";
+import * as webpush from "web-push";
 
 // Pinged by an external scheduler (cron-job.org) on a schedule (e.g. every
 // 5 min). Reads the push store from the GitHub data repo, finds reminders due
