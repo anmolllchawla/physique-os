@@ -100,6 +100,28 @@ self.addEventListener("message", (event) => {
 });
 
 // Tapping the notification focuses the app.
+// ── Web Push ──────────────────────────────────────────────
+// Receives background pushes (from /api/push/send via the external scheduler)
+// and shows the notification even when the app is closed.
+self.addEventListener("push", (event) => {
+  let data = { title: "PhysiqueOS", body: "Reminder", tag: "reminder" };
+  try {
+    if (event.data) data = { ...data, ...event.data.json() };
+  } catch {
+    /* use defaults */
+  }
+  event.waitUntil(
+    self.registration.showNotification(data.title, {
+      body: data.body,
+      tag: data.tag,
+      icon: "/icon-192.png",
+      badge: "/icon-192.png",
+      vibrate: [200, 100, 200],
+      renotify: true,
+    })
+  );
+});
+
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   event.waitUntil(

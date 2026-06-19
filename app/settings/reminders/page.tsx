@@ -14,16 +14,41 @@ import {
 import { PageHeader, Section } from "@/components/Layout";
 import { Button } from "@/components/ui/button";
 import { Bell, BellOff, AlertTriangle } from "lucide-react";
+import {
+  pushSupported,
+  subscribeToPush,
+  unsubscribeFromPush,
+  isPushSubscribed,
+  syncReminderSchedule,
+} from "@/lib/push";
 
 export default function RemindersPage() {
   const [prefs, setPrefs] = useState<Record<ReminderKey, ReminderPref> | null>(null);
   const [perm, setPerm] = useState<NotificationPermission | "unsupported">("default");
+  const [bgOn, setBgOn] = useState(false);
+  const [bgBusy, setBgBusy] = useState(false);
+  const [bgMsg, setBgMsg] = useState<string | null>(null);
 
   useEffect(() => {
     loadReminderPrefs().then(setPrefs);
     if (notificationsSupported()) setPerm(Notification.permission);
     else setPerm("unsupported");
+    isPushSubscribed().then(setBgOn);
   }, []);
+
+  // Mirror the reminder schedule to the server (for the cron job) whenever
+  // background push is on.
+  const pushSchedule = async (p: Record<ReminderKey, ReminderPref>) => {
+    if (!bgOn) return;
+    const list = REMINDER_DEFS.map((d) => ({
+      key: d.key,
+      label: d.label,
+      body: d.body,
+      time: p[d.key].time,
+      enabled: p[d.key].enabled,
+    }));
+    await syncReminderSchedule(list);
+  };
 
   const update = async (key: ReminderKey, patch: Partial<ReminderPref>) => {
     if (!prefs) return;
@@ -31,12 +56,44 @@ export default function RemindersPage() {
     setPrefs(next);
     await saveReminderPrefs(next);
     await armReminders();
+    await pushSchedule(next);
   };
 
   const askPermission = async () => {
     const ok = await requestPermission();
     setPerm(ok ? "granted" : Notification.permission);
     if (ok) await armReminders();
+  };
+
+  const enableBackground = async () => {
+    setBgBusy(true);
+    setBgMsg(null);
+    const res = await subscribeToPush();
+    if (res.ok) {
+      setBgOn(true);
+      if (prefs) {
+        const list = REMINDER_DEFS.map((d) => ({
+          key: d.key,
+          label: d.label,
+          body: d.body,
+          time: prefs[d.key].time,
+          enabled: prefs[d.key].enabled,
+        }));
+        await syncReminderSchedule(list);
+      }
+      setBgMsg("Background notifications on. They'll fire even when the app is closed.");
+    } else {
+      setBgMsg(res.error ?? "Couldn't enable background notifications.");
+    }
+    setBgBusy(false);
+  };
+
+  const disableBackground = async () => {
+    setBgBusy(true);
+    await unsubscribeFromPush();
+    setBgOn(false);
+    setBgMsg("Background notifications off.");
+    setBgBusy(false);
   };
 
   return (
@@ -64,6 +121,32 @@ export default function RemindersPage() {
         ) : (
           <div className="flex items-center gap-2 text-sm text-[#36D399]">
             <Bell className="w-4 h-4" /> Notifications enabled
+          </div>
+        )}
+
+        {/* Background notifications (Web Push) */}
+        {perm === "granted" && pushSupported() && (
+          <div className="rounded-2xl bg-[#121316] border border-[#24262C] p-4 flex flex-col gap-3">
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-semibold">Background notifications</span>
+              <span className="text-xs font-bold" style={{ color: bgOn ? "#36D399" : "#5A5F66" }}>
+                {bgOn ? "On" : "Off"}
+              </span>
+            </div>
+            <p className="text-xs text-[#9BA0A6]">
+              Fire reminders at their exact times even when the app is closed. Requires the app
+              installed to your home screen and a one-time scheduler setup.
+            </p>
+            {bgOn ? (
+              <Button variant="ghost" onClick={disableBackground} disabled={bgBusy}>
+                Turn off background notifications
+              </Button>
+            ) : (
+              <Button onClick={enableBackground} disabled={bgBusy}>
+                {bgBusy ? "Enabling…" : "Enable background notifications"}
+              </Button>
+            )}
+            {bgMsg && <p className="text-xs text-[#9BA0A6]">{bgMsg}</p>}
           </div>
         )}
 
