@@ -43,22 +43,30 @@ async function getAccessToken(refreshToken: string): Promise<string | null> {
   return data.access_token ?? null;
 }
 
-// Pull a data type's points. In debug mode, drops the filter so we can see
-// whether data exists at all (and surfaces the real HTTP error if one occurs).
+// Pull a data type's points. Most types use the `list` endpoint; daily
+// aggregate types (e.g. total-calories) only support `dailyRollUp`.
 async function fetchType(
   accessToken: string,
   dataType: string,
   startISO: string,
   endISO: string,
-  debug = false
+  debug = false,
+  mode: "list" | "dailyRollUp" = "list"
 ): Promise<{ points: unknown[]; status: number; error?: string }> {
-  // Filter uses snake_case type name; endpoint uses kebab-case.
-  const filterField = dataType.replace(/-/g, "_");
-  const filter = `${filterField}.sample_time.physical_time >= "${startISO}" AND ${filterField}.sample_time.physical_time <= "${endISO}"`;
-  const qs = debug
-    ? `pageSize=100`
-    : `pageSize=10000&filter=${encodeURIComponent(filter)}`;
-  const url = `${HEALTH_BASE}/${dataType}/dataPoints?${qs}`;
+  let url: string;
+  if (mode === "dailyRollUp") {
+    // dailyRollUp aggregates by civil day over the window.
+    const params = new URLSearchParams({
+      "startTime.physicalTime": startISO,
+      "endTime.physicalTime": endISO,
+    });
+    url = `${HEALTH_BASE}/${dataType}/dataPoints:dailyRollUp?${params.toString()}`;
+  } else {
+    const filterField = dataType.replace(/-/g, "_");
+    const filter = `${filterField}.sample_time.physical_time >= "${startISO}" AND ${filterField}.sample_time.physical_time <= "${endISO}"`;
+    const qs = debug ? `pageSize=100` : `pageSize=10000&filter=${encodeURIComponent(filter)}`;
+    url = `${HEALTH_BASE}/${dataType}/dataPoints?${qs}`;
+  }
   const res = await fetch(url, {
     headers: { Authorization: `Bearer ${accessToken}` },
     cache: "no-store",
@@ -67,8 +75,8 @@ async function fetchType(
     const text = await res.text().catch(() => "");
     return { points: [], status: res.status, error: text.slice(0, 300) };
   }
-  const body = (await res.json()) as { dataPoints?: unknown[] };
-  return { points: body.dataPoints ?? [], status: 200 };
+  const body = (await res.json()) as { dataPoints?: unknown[]; rollUps?: unknown[] };
+  return { points: body.dataPoints ?? body.rollUps ?? [], status: 200 };
 }
 
 export async function GET(req: NextRequest) {
@@ -98,22 +106,25 @@ export async function GET(req: NextRequest) {
   const startISO = start.toISOString();
   const endISO = end.toISOString();
 
-  const TYPES: [string, string][] = [
-    ["hrv", "daily-heart-rate-variability"],
-    ["rhr", "daily-resting-heart-rate"],
-    ["sleep", "sleep"],
-    ["steps", "steps"],
-    ["calories", "total-calories"],
-    ["spo2", "daily-oxygen-saturation"],
-    ["resp", "daily-respiratory-rate"],
-    ["azm", "active-zone-minutes"],
-    ["ecg", "ecg"],
-    ["irn", "irregular-rhythm-notifications"],
+  // [key, dataType, mode]. Calories only supports dailyRollUp. ECG/IRN use the
+  // corrected singular IDs (may still be gated by Google — failures are
+  // non-fatal and just return empty).
+  const TYPES: [string, string, "list" | "dailyRollUp"][] = [
+    ["hrv", "daily-heart-rate-variability", "list"],
+    ["rhr", "daily-resting-heart-rate", "list"],
+    ["sleep", "sleep", "list"],
+    ["steps", "steps", "list"],
+    ["calories", "total-calories", "dailyRollUp"],
+    ["spo2", "daily-oxygen-saturation", "list"],
+    ["resp", "daily-respiratory-rate", "list"],
+    ["azm", "active-zone-minutes", "list"],
+    ["ecg", "electrocardiogram", "list"],
+    ["irn", "irregular-rhythm-notification", "list"],
   ];
 
   try {
     const results = await Promise.all(
-      TYPES.map(([, dt]) => fetchType(access, dt, startISO, endISO, debug))
+      TYPES.map(([, dt, mode]) => fetchType(access, dt, startISO, endISO, debug, mode))
     );
 
     // In debug mode, return per-type status + counts so we can see exactly

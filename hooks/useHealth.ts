@@ -7,25 +7,6 @@ import { computeReadiness } from "@/lib/readiness";
 
 const DAY = 86400000;
 
-// Pull a numeric value from a data point regardless of minor shape differences.
-// Google Health points nest the value under a type-specific key; we search
-// common shapes defensively so a schema tweak doesn't crash the parse.
-function num(obj: unknown, keys: string[]): number | null {
-  if (!obj || typeof obj !== "object") return null;
-  const rec = obj as Record<string, unknown>;
-  for (const k of keys) {
-    const v = rec[k];
-    if (typeof v === "number" && !Number.isNaN(v)) return v;
-    if (typeof v === "string" && v.trim() !== "" && !Number.isNaN(Number(v))) return Number(v);
-  }
-  // One level deeper.
-  for (const val of Object.values(rec)) {
-    const deep = num(val, keys);
-    if (deep != null) return deep;
-  }
-  return null;
-}
-
 // Pull a string classification (e.g. ECG rhythm result) from a point.
 function str(obj: unknown, keys: string[]): string | null {
   if (!obj || typeof obj !== "object") return null;
@@ -64,26 +45,6 @@ function pointDate(p: unknown): string | null {
   return null;
 }
 
-function sumByDate(points: unknown[], valueKeys: string[]): Record<string, number> {
-  const out: Record<string, number> = {};
-  for (const p of points) {
-    const d = pointDate(p);
-    const v = num(p, valueKeys);
-    if (d && v != null) out[d] = (out[d] ?? 0) + v;
-  }
-  return out;
-}
-
-function lastByDate(points: unknown[], valueKeys: string[]): Record<string, number> {
-  const out: Record<string, number> = {};
-  for (const p of points) {
-    const d = pointDate(p);
-    const v = num(p, valueKeys);
-    if (d && v != null) out[d] = v; // last write wins (daily rollups are 1/day)
-  }
-  return out;
-}
-
 interface RawBundle {
   hrv: unknown[];
   rhr: unknown[];
@@ -97,7 +58,8 @@ interface RawBundle {
   irn: unknown[];
 }
 
-// Parse the raw API bundle into per-day Biometrics rows.
+// Parse the raw API bundle into per-day Biometrics rows. Field paths match the
+// actual Google Health response shapes (confirmed via live diagnostic).
 function parseBundle(raw: RawBundle): Map<string, Partial<Biometrics>> {
   const byDate = new Map<string, Partial<Biometrics>>();
   const ensure = (d: string) => {
@@ -105,49 +67,139 @@ function parseBundle(raw: RawBundle): Map<string, Partial<Biometrics>> {
     return byDate.get(d)!;
   };
 
-  const hrv = lastByDate(raw.hrv, ["dailyRmssd", "rmssd", "value", "milliseconds"]);
-  for (const [d, v] of Object.entries(hrv)) ensure(d).hrv_ms = Math.round(v);
+  // Daily-rollup types carry an explicit { date: {year,month,day} }. Build the
+  // YYYY-MM-DD from that when present, else fall back to timestamps.
+  const civilDate = (obj: Record<string, unknown> | undefined): string | null => {
+    if (!obj) return null;
+    const d = obj.date as { year?: number; month?: number; day?: number } | undefined;
+    if (d?.year && d?.month && d?.day) {
+      return `${d.year}-${String(d.month).padStart(2, "0")}-${String(d.day).padStart(2, "0")}`;
+    }
+    return null;
+  };
 
-  const rhr = lastByDate(raw.rhr, ["bpm", "beatsPerMinute", "value", "restingHeartRate"]);
-  for (const [d, v] of Object.entries(rhr)) ensure(d).resting_hr = Math.round(v);
+  const toNum = (v: unknown): number | null => {
+    if (typeof v === "number" && !Number.isNaN(v)) return v;
+    if (typeof v === "string" && v.trim() !== "" && !Number.isNaN(Number(v))) return Number(v);
+    return null;
+  };
 
-  const spo2 = lastByDate(raw.spo2, ["percentage", "value", "oxygenSaturation"]);
-  for (const [d, v] of Object.entries(spo2)) ensure(d).spo2_pct = Math.round(v);
+  // ── HRV (daily rollup) ──
+  for (const p of raw.hrv) {
+    const rec = (p as Record<string, unknown>).dailyHeartRateVariability as Record<string, unknown> | undefined;
+    if (!rec) continue;
+    const d = civilDate(rec);
+    const v = toNum(rec.averageHeartRateVariabilityMilliseconds);
+    if (d && v != null) ensure(d).hrv_ms = Math.round(v);
+  }
 
-  const resp = lastByDate(raw.resp, ["breathsPerMinute", "value", "respiratoryRate"]);
-  for (const [d, v] of Object.entries(resp)) ensure(d).respiratory_rate = Math.round(v);
+  // ── Resting HR (daily rollup, value is a string) ──
+  for (const p of raw.rhr) {
+    const rec = (p as Record<string, unknown>).dailyRestingHeartRate as Record<string, unknown> | undefined;
+    if (!rec) continue;
+    const d = civilDate(rec);
+    const v = toNum(rec.beatsPerMinute);
+    if (d && v != null) ensure(d).resting_hr = Math.round(v);
+  }
 
-  const steps = sumByDate(raw.steps, ["count", "steps", "value"]);
-  for (const [d, v] of Object.entries(steps)) ensure(d).steps = Math.round(v);
+  // ── SpO2 (daily rollup) ──
+  for (const p of raw.spo2) {
+    const rec = (p as Record<string, unknown>).dailyOxygenSaturation as Record<string, unknown> | undefined;
+    if (!rec) continue;
+    const d = civilDate(rec);
+    const v = toNum(rec.averagePercentage);
+    if (d && v != null) ensure(d).spo2_pct = Math.round(v);
+  }
 
-  const cals = sumByDate(raw.calories, ["calories", "kcal", "value", "energy"]);
-  for (const [d, v] of Object.entries(cals)) ensure(d).calories_out = Math.round(v);
+  // ── Respiratory rate (daily rollup) ──
+  for (const p of raw.resp) {
+    const rec = (p as Record<string, unknown>).dailyRespiratoryRate as Record<string, unknown> | undefined;
+    if (!rec) continue;
+    const d = civilDate(rec);
+    const v = toNum(rec.breathsPerMinute);
+    if (d && v != null) ensure(d).respiratory_rate = Math.round(v);
+  }
 
-  const azm = sumByDate(raw.azm, ["minutes", "activeZoneMinutes", "value"]);
-  for (const [d, v] of Object.entries(azm)) ensure(d).active_minutes = Math.round(v);
-
-  // Sleep: sum session durations per date (minutes).
+  // ── Sleep (sessions; total minutes in summary, attributed to end date) ──
   const sleepMin: Record<string, number> = {};
+  const sleepDeep: Record<string, number> = {};
+  const sleepRem: Record<string, number> = {};
   for (const p of raw.sleep) {
-    const d = pointDate(p);
+    const s = (p as Record<string, unknown>).sleep as Record<string, unknown> | undefined;
+    if (!s) continue;
+    const interval = s.interval as Record<string, unknown> | undefined;
+    const endT = interval?.endTime;
+    const d = typeof endT === "string" ? endT.slice(0, 10) : null;
     if (!d) continue;
-    const mins = num(p, ["durationMinutes", "minutesAsleep", "totalSleepMinutes"]);
-    if (mins != null) {
-      sleepMin[d] = (sleepMin[d] ?? 0) + mins;
-    } else {
-      // Fall back to start/end interval if duration not present.
-      const rec = p as Record<string, unknown>;
-      const iv = (rec.interval ?? rec) as Record<string, unknown>;
-      const s = typeof iv.startTime === "string" ? new Date(iv.startTime).getTime() : NaN;
-      const e = typeof iv.endTime === "string" ? new Date(iv.endTime).getTime() : NaN;
-      if (!Number.isNaN(s) && !Number.isNaN(e) && e > s) {
-        sleepMin[d] = (sleepMin[d] ?? 0) + Math.round((e - s) / 60000);
-      }
+    const summary = s.summary as Record<string, unknown> | undefined;
+    const asleep = toNum(summary?.minutesAsleep);
+    if (asleep != null) sleepMin[d] = (sleepMin[d] ?? 0) + asleep;
+    // Stage minutes from stagesSummary.
+    const stages = (summary?.stagesSummary as { type?: string; minutes?: unknown }[] | undefined) ?? [];
+    for (const st of stages) {
+      const m = toNum(st.minutes);
+      if (m == null) continue;
+      if (st.type === "DEEP") sleepDeep[d] = (sleepDeep[d] ?? 0) + m;
+      if (st.type === "REM") sleepRem[d] = (sleepRem[d] ?? 0) + m;
     }
   }
   for (const [d, v] of Object.entries(sleepMin)) ensure(d).sleep_minutes = Math.round(v);
+  for (const [d, v] of Object.entries(sleepDeep)) ensure(d).sleep_deep_minutes = Math.round(v);
+  for (const [d, v] of Object.entries(sleepRem)) ensure(d).sleep_rem_minutes = Math.round(v);
+
+  // ── Steps (intraday intervals; sum per civil date) ──
+  const stepSum: Record<string, number> = {};
+  for (const p of raw.steps) {
+    const st = (p as Record<string, unknown>).steps as Record<string, unknown> | undefined;
+    if (!st) continue;
+    const interval = st.interval as Record<string, unknown> | undefined;
+    const d = intervalCivilDate(interval);
+    const v = toNum(st.count);
+    if (d && v != null) stepSum[d] = (stepSum[d] ?? 0) + v;
+  }
+  for (const [d, v] of Object.entries(stepSum)) ensure(d).steps = Math.round(v);
+
+  // ── Active zone minutes (intraday intervals; sum per civil date) ──
+  const azmSum: Record<string, number> = {};
+  for (const p of raw.azm) {
+    const a = (p as Record<string, unknown>).activeZoneMinutes as Record<string, unknown> | undefined;
+    if (!a) continue;
+    const interval = a.interval as Record<string, unknown> | undefined;
+    const d = intervalCivilDate(interval);
+    const v = toNum(a.activeZoneMinutes);
+    if (d && v != null) azmSum[d] = (azmSum[d] ?? 0) + v;
+  }
+  for (const [d, v] of Object.entries(azmSum)) ensure(d).active_minutes = Math.round(v);
+
+  // ── Calories (daily rollup; see route — comes back under a rollup shape) ──
+  for (const p of raw.calories) {
+    const rec = (p as Record<string, unknown>);
+    // dailyRollUp responses wrap the value; search common spots.
+    const d =
+      civilDate(rec.totalCalories as Record<string, unknown> | undefined) ||
+      civilDate(rec.interval as Record<string, unknown> | undefined) ||
+      civilDate(rec);
+    const v =
+      toNum((rec.totalCalories as Record<string, unknown> | undefined)?.calories) ??
+      toNum(rec.calories) ??
+      toNum(rec.value);
+    if (d && v != null) ensure(d).calories_out = Math.round(v);
+  }
 
   return byDate;
+}
+
+// Pull YYYY-MM-DD from an interval's civilStartTime (intraday types).
+function intervalCivilDate(interval: Record<string, unknown> | undefined): string | null {
+  if (!interval) return null;
+  const civ = interval.civilStartTime as { date?: { year?: number; month?: number; day?: number } } | undefined;
+  const d = civ?.date;
+  if (d?.year && d?.month && d?.day) {
+    return `${d.year}-${String(d.month).padStart(2, "0")}-${String(d.day).padStart(2, "0")}`;
+  }
+  const st = interval.startTime;
+  if (typeof st === "string") return st.slice(0, 10);
+  return null;
 }
 
 // Run a sync: call the server, parse, compute readiness, store. Returns a
