@@ -69,7 +69,6 @@ async function fetchType(
   }
   const body = (await res.json()) as { dataPoints?: unknown[] };
   return { points: body.dataPoints ?? [], status: 200 };
-  return body.dataPoints ?? [];
 }
 
 export async function GET(req: NextRequest) {
