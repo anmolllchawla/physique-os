@@ -43,23 +43,32 @@ async function getAccessToken(refreshToken: string): Promise<string | null> {
   return data.access_token ?? null;
 }
 
-// Pull a data type's points within [startISO, endISO]. Returns dataPoints[].
+// Pull a data type's points. In debug mode, drops the filter so we can see
+// whether data exists at all (and surfaces the real HTTP error if one occurs).
 async function fetchType(
   accessToken: string,
   dataType: string,
   startISO: string,
-  endISO: string
-): Promise<unknown[]> {
+  endISO: string,
+  debug = false
+): Promise<{ points: unknown[]; status: number; error?: string }> {
   // Filter uses snake_case type name; endpoint uses kebab-case.
   const filterField = dataType.replace(/-/g, "_");
   const filter = `${filterField}.sample_time.physical_time >= "${startISO}" AND ${filterField}.sample_time.physical_time <= "${endISO}"`;
-  const url = `${HEALTH_BASE}/${dataType}/dataPoints?pageSize=10000&filter=${encodeURIComponent(filter)}`;
+  const qs = debug
+    ? `pageSize=100`
+    : `pageSize=10000&filter=${encodeURIComponent(filter)}`;
+  const url = `${HEALTH_BASE}/${dataType}/dataPoints?${qs}`;
   const res = await fetch(url, {
     headers: { Authorization: `Bearer ${accessToken}` },
     cache: "no-store",
   });
-  if (!res.ok) return [];
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    return { points: [], status: res.status, error: text.slice(0, 300) };
+  }
   const body = (await res.json()) as { dataPoints?: unknown[] };
+  return { points: body.dataPoints ?? [], status: 200 };
   return body.dataPoints ?? [];
 }
 
@@ -83,33 +92,53 @@ export async function GET(req: NextRequest) {
   }
 
   // Window: last N days (default 3) up to now.
-  const days = Math.min(parseInt(req.nextUrl.searchParams.get("days") || "3", 10), 14);
+  const days = Math.min(parseInt(req.nextUrl.searchParams.get("days") || "3", 10), 30);
+  const debug = req.nextUrl.searchParams.get("debug") === "1";
   const end = new Date();
   const start = new Date(end.getTime() - days * 86400000);
   const startISO = start.toISOString();
   const endISO = end.toISOString();
 
-  try {
-    const [hrv, rhr, sleep, steps, calories, spo2, resp, azm, ecg, irn] = await Promise.all([
-      fetchType(access, "daily-heart-rate-variability", startISO, endISO),
-      fetchType(access, "daily-resting-heart-rate", startISO, endISO),
-      fetchType(access, "sleep", startISO, endISO),
-      fetchType(access, "steps", startISO, endISO),
-      fetchType(access, "total-calories", startISO, endISO),
-      fetchType(access, "daily-oxygen-saturation", startISO, endISO),
-      fetchType(access, "daily-respiratory-rate", startISO, endISO),
-      fetchType(access, "active-zone-minutes", startISO, endISO),
-      fetchType(access, "ecg", startISO, endISO),
-      fetchType(access, "irregular-rhythm-notifications", startISO, endISO),
-    ]);
+  const TYPES: [string, string][] = [
+    ["hrv", "daily-heart-rate-variability"],
+    ["rhr", "daily-resting-heart-rate"],
+    ["sleep", "sleep"],
+    ["steps", "steps"],
+    ["calories", "total-calories"],
+    ["spo2", "daily-oxygen-saturation"],
+    ["resp", "daily-respiratory-rate"],
+    ["azm", "active-zone-minutes"],
+    ["ecg", "ecg"],
+    ["irn", "irregular-rhythm-notifications"],
+  ];
 
-    // Hand raw arrays back to the client; it parses into daily Biometrics.
-    // (Parsing client-side keeps this route generic against schema tweaks.)
-    return NextResponse.json({
-      ok: true,
-      window: { startISO, endISO },
-      raw: { hrv, rhr, sleep, steps, calories, spo2, resp, azm, ecg, irn },
+  try {
+    const results = await Promise.all(
+      TYPES.map(([, dt]) => fetchType(access, dt, startISO, endISO, debug))
+    );
+
+    // In debug mode, return per-type status + counts so we can see exactly
+    // which calls error vs. return empty vs. return data.
+    if (debug) {
+      const diag: Record<string, { status: number; count: number; error?: string; sample?: unknown }> = {};
+      TYPES.forEach(([key], i) => {
+        const r = results[i];
+        diag[key] = {
+          status: r.status,
+          count: r.points.length,
+          error: r.error,
+          sample: r.points[0],
+        };
+      });
+      return NextResponse.json({ ok: true, debug: true, window: { startISO, endISO }, diag });
+    }
+
+    const raw: Record<string, unknown[]> = {};
+    TYPES.forEach(([key], i) => {
+      raw[key] = results[i].points;
     });
+
+    return NextResponse.json({ ok: true, window: { startISO, endISO }, raw });
   } catch (e) {
     return NextResponse.json(
       { error: e instanceof Error ? e.message : "sync failed" },
