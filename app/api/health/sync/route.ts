@@ -50,7 +50,6 @@ async function fetchType(
   dataType: string,
   startISO: string,
   endISO: string,
-  debug = false,
   mode: "list" | "dailyRollUp" = "list"
 ): Promise<{ points: unknown[]; status: number; error?: string }> {
   let url: string;
@@ -62,10 +61,10 @@ async function fetchType(
     });
     url = `${HEALTH_BASE}/${dataType}/dataPoints:dailyRollUp?${params.toString()}`;
   } else {
-    const filterField = dataType.replace(/-/g, "_");
-    const filter = `${filterField}.sample_time.physical_time >= "${startISO}" AND ${filterField}.sample_time.physical_time <= "${endISO}"`;
-    const qs = debug ? `pageSize=100` : `pageSize=10000&filter=${encodeURIComponent(filter)}`;
-    url = `${HEALTH_BASE}/${dataType}/dataPoints?${qs}`;
+    // No filter: the list endpoint returns recent points by default, which is
+    // what actually works (the filter syntax was being rejected → empty). We
+    // pull a generous page and attribute each point to its date in the parser.
+    url = `${HEALTH_BASE}/${dataType}/dataPoints?pageSize=10000`;
   }
   const res = await fetch(url, {
     headers: { Authorization: `Bearer ${accessToken}` },
@@ -124,7 +123,7 @@ export async function GET(req: NextRequest) {
 
   try {
     const results = await Promise.all(
-      TYPES.map(([, dt, mode]) => fetchType(access, dt, startISO, endISO, debug, mode))
+      TYPES.map(([, dt, mode]) => fetchType(access, dt, startISO, endISO, mode))
     );
 
     // In debug mode, return per-type status + counts so we can see exactly
