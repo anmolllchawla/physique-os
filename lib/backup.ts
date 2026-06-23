@@ -37,6 +37,7 @@ export interface Snapshot {
     stackLogs: unknown[];
     stackCheckIns: unknown[];
     labMarkers: unknown[];
+    biometrics: unknown[];
   };
 }
 
@@ -59,6 +60,7 @@ export async function buildSnapshot(): Promise<Snapshot> {
     stackLogs,
     stackCheckIns,
     labMarkers,
+    biometrics,
     allSettings,
   ] = await Promise.all([
     db.exercises.toArray(),
@@ -78,6 +80,7 @@ export async function buildSnapshot(): Promise<Snapshot> {
     db.stackLogs.toArray(),
     db.stackCheckIns.toArray(),
     db.labMarkers.toArray(),
+    db.biometrics.toArray(),
     db.settings.toArray(),
   ]);
 
@@ -109,6 +112,7 @@ export async function buildSnapshot(): Promise<Snapshot> {
       stackLogs,
       stackCheckIns,
       labMarkers,
+      biometrics,
       safeSettings,
     },
   };
@@ -139,6 +143,7 @@ export async function restoreSnapshot(snap: Snapshot, mode: "replace" | "merge" 
       db.stackLogs,
       db.stackCheckIns,
       db.labMarkers,
+      db.biometrics,
       db.settings,
     ],
     async () => {
@@ -161,6 +166,7 @@ export async function restoreSnapshot(snap: Snapshot, mode: "replace" | "merge" 
           db.stackLogs.clear(),
           db.stackCheckIns.clear(),
           db.labMarkers.clear(),
+          db.biometrics.clear(),
         ]);
       }
       // bulkPut is an upsert — safe for both replace and merge.
@@ -181,6 +187,7 @@ export async function restoreSnapshot(snap: Snapshot, mode: "replace" | "merge" 
       await db.stackLogs.bulkPut((d.stackLogs ?? []) as never[]);
       await db.stackCheckIns.bulkPut((d.stackCheckIns ?? []) as never[]);
       await db.labMarkers.bulkPut((d.labMarkers ?? []) as never[]);
+      await db.biometrics.bulkPut((d.biometrics ?? []) as never[]);
       // Restore only safe settings; never overwrite the local PIN.
       if (Array.isArray(d.safeSettings)) {
         await db.settings.bulkPut(d.safeSettings as never[]);

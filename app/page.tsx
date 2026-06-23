@@ -11,6 +11,8 @@ import { useStackSafety } from "@/hooks/useStack";
 import { useWorkoutStore } from "@/store/useWorkoutStore";
 import { todayISO, displayWeight } from "@/lib/utils";
 import { readinessLabel } from "@/lib/scoring";
+import { useTodayBiometrics, useRecentBiometrics } from "@/hooks/useHealth";
+import { computeReadiness } from "@/lib/readiness";
 import { computeLifestyleScore, type LifestyleInputs } from "@/lib/lifestyleScore";
 import { toggleProtocolTask } from "@/lib/protocol";
 import { useSettings } from "@/hooks/useSettings";
@@ -103,7 +105,25 @@ export default function DashboardPage() {
     latestWeight && previousWeight ? latestWeight.weight_lbs - previousWeight.weight_lbs : null;
 
   const score = checkin?.readiness_score ?? null;
-  const scoreInfo = score != null ? readinessLabel(score) : null;
+  const checkinScoreInfo = score != null ? readinessLabel(score) : null;
+
+  // If Google Health biometrics exist for today, prefer the data-driven
+  // readiness over the self-reported check-in score.
+  const todayBio = useTodayBiometrics();
+  const recentBio = useRecentBiometrics(30);
+  const bioReadiness =
+    todayBio && (todayBio.hrv_ms != null || todayBio.resting_hr != null || todayBio.sleep_minutes != null)
+      ? computeReadiness(
+          todayBio,
+          recentBio.filter((b) => b.date < todayBio.date)
+        )
+      : null;
+
+  const scoreInfo = bioReadiness
+    ? { color: bioReadiness.color, label: bioReadiness.label, score: bioReadiness.score }
+    : checkinScoreInfo
+    ? { color: checkinScoreInfo.color, label: checkinScoreInfo.label, score: score! }
+    : null;
 
   const stackTakenToday = (stackLogsToday ?? []).filter((l) => l.taken).length;
   const suppTotal = stackItems?.length ?? 0;
@@ -298,16 +318,19 @@ export default function DashboardPage() {
               <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#5A5F66]">
                 Readiness
               </p>
-              {score != null ? (
+              {scoreInfo != null ? (
                 <>
                   <p
                     className="text-5xl font-extrabold tnums leading-none mt-2"
-                    style={{ color: scoreInfo!.color }}
+                    style={{ color: scoreInfo.color }}
                   >
-                    {score}
+                    {scoreInfo.score}
                   </p>
-                  <p className="text-sm font-bold uppercase tracking-wide mt-1" style={{ color: scoreInfo!.color }}>
-                    {scoreInfo!.label}
+                  <p className="text-sm font-bold uppercase tracking-wide mt-1" style={{ color: scoreInfo.color }}>
+                    {scoreInfo.label}
+                  </p>
+                  <p className="text-[10px] text-[#5A5F66] mt-1">
+                    {bioReadiness ? "From Fitbit data" : "From check-in"}
                   </p>
                 </>
               ) : (

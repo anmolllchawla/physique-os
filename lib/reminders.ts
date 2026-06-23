@@ -9,6 +9,7 @@
 import { db } from "./db";
 
 export type ReminderKey =
+  | "checkin"
   | "workout"
   | "protein"
   | "water"
@@ -19,18 +20,39 @@ export type ReminderKey =
 
 export interface ReminderPref {
   enabled: boolean;
-  time: string; // "HH:MM" 24h
+  time: string; // "HH:MM" 24h — for interval reminders this is the START time
 }
 
+// The check-in reminder is an INTERVAL reminder: it fires every N hours from
+// its start time until (and not including) the end hour. Everything else is a
+// single fixed-time reminder.
+export const CHECKIN_INTERVAL_HOURS = 2;
+export const CHECKIN_END_HOUR = 21; // stop at 9pm (bedtime takes over)
+
 export const REMINDER_DEFS: { key: ReminderKey; label: string; defaultTime: string; body: string }[] = [
+  { key: "checkin", label: "Check-in (every 2h)", defaultTime: "09:00", body: "Quick check-in — log water, fuel, and how you feel." },
   { key: "workout", label: "Workout", defaultTime: "17:00", body: "Time to train. Open your session." },
   { key: "protein", label: "Protein check", defaultTime: "14:00", body: "How's your protein? Log your fuel." },
   { key: "water", label: "Water", defaultTime: "11:00", body: "Hydrate — log your water." },
   { key: "supplement", label: "Supplements", defaultTime: "09:00", body: "Take and log your stack." },
-  { key: "bedtime", label: "Bedtime", defaultTime: "22:30", body: "Wind down. Protect your sleep." },
+  { key: "bedtime", label: "Bedtime", defaultTime: "21:00", body: "Wind down. Time to sleep." },
   { key: "weekly_review", label: "Weekly review", defaultTime: "10:00", body: "Review your week in PhysiqueOS." },
   { key: "progress_photo", label: "Progress photo", defaultTime: "08:00", body: "Snap today's progress photo." },
 ];
+
+// Expand a reminder pref into concrete fire-times. The check-in interval
+// reminder becomes multiple times (start, +2h, +4h … up to but not past the
+// end hour); all others are a single time.
+export function expandReminderTimes(key: ReminderKey, startTime: string): string[] {
+  if (key !== "checkin") return [startTime];
+  const [sh] = startTime.split(":").map(Number);
+  const startMin = parseInt(startTime.split(":")[1] || "0", 10);
+  const times: string[] = [];
+  for (let h = sh; h < CHECKIN_END_HOUR; h += CHECKIN_INTERVAL_HOURS) {
+    times.push(`${String(h).padStart(2, "0")}:${String(startMin).padStart(2, "0")}`);
+  }
+  return times;
+}
 
 const SETTING_KEY = "reminders";
 
@@ -72,7 +94,7 @@ export async function requestPermission(): Promise<boolean> {
 // by firing each reminder at most once per day (tracked in sessionStorage).
 let timers: ReturnType<typeof setTimeout>[] = [];
 
-function firedKey(key: ReminderKey): string {
+function firedKey(key: string): string {
   return `reminder_fired_${new Date().toISOString().slice(0, 10)}_${key}`;
 }
 
@@ -89,42 +111,49 @@ export async function armReminders(): Promise<void> {
     const pref = prefs[def.key];
     if (!pref?.enabled) continue;
 
-    const [h, m] = pref.time.split(":").map(Number);
-    const when = new Date(now);
-    when.setHours(h, m, 0, 0);
-    const delay = when.getTime() - now.getTime();
-    if (delay <= 0) continue; // already passed today
+    // Interval reminders (check-in) expand into several fire-times.
+    const fireTimes = expandReminderTimes(def.key, pref.time);
 
-    let alreadyFired = false;
-    try {
-      alreadyFired = sessionStorage.getItem(firedKey(def.key)) === "1";
-    } catch {
-      /* ignore */
-    }
-    if (alreadyFired) continue;
+    fireTimes.forEach((ft, idx) => {
+      const [h, m] = ft.split(":").map(Number);
+      const when = new Date(now);
+      when.setHours(h, m, 0, 0);
+      const delay = when.getTime() - now.getTime();
+      if (delay <= 0) return; // already passed today
 
-    const t = setTimeout(() => {
+      // Per-time spam guard so each slot fires at most once/day.
+      const slotKey = `${def.key}_${ft}`;
+      let alreadyFired = false;
       try {
-        sessionStorage.setItem(firedKey(def.key), "1");
+        alreadyFired = sessionStorage.getItem(firedKey(slotKey)) === "1";
       } catch {
         /* ignore */
       }
-      if (Notification.permission === "granted") {
-        if (navigator.serviceWorker?.ready) {
-          navigator.serviceWorker.ready
-            .then((reg) =>
-              reg.showNotification(`PhysiqueOS · ${def.label}`, {
-                body: def.body,
-                tag: `reminder-${def.key}`,
-                icon: "/icon-192.png",
-              })
-            )
-            .catch(() => new Notification(`PhysiqueOS · ${def.label}`, { body: def.body }));
-        } else {
-          new Notification(`PhysiqueOS · ${def.label}`, { body: def.body });
+      if (alreadyFired) return;
+
+      const t = setTimeout(() => {
+        try {
+          sessionStorage.setItem(firedKey(slotKey), "1");
+        } catch {
+          /* ignore */
         }
-      }
-    }, delay);
-    timers.push(t);
+        if (Notification.permission === "granted") {
+          if (navigator.serviceWorker?.ready) {
+            navigator.serviceWorker.ready
+              .then((reg) =>
+                reg.showNotification(`PhysiqueOS · ${def.label}`, {
+                  body: def.body,
+                  tag: `reminder-${def.key}-${idx}`,
+                  icon: "/icon-192.png",
+                })
+              )
+              .catch(() => new Notification(`PhysiqueOS · ${def.label}`, { body: def.body }));
+          } else {
+            new Notification(`PhysiqueOS · ${def.label}`, { body: def.body });
+          }
+        }
+      }, delay);
+      timers.push(t);
+    });
   }
 }

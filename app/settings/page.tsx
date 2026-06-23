@@ -35,6 +35,7 @@ import {
   AlertTriangle,
   Lock,
   Bell,
+  Activity,
 } from "lucide-react";
 import {
   isVaultEnabled,
@@ -42,12 +43,53 @@ import {
   disableVault,
   setSessionPassphrase,
 } from "@/lib/vault";
+import { syncGoogleHealth } from "@/hooks/useHealth";
 
 type Status = { kind: "idle" | "ok" | "err" | "busy"; msg?: string };
 
 export default function SettingsPage() {
   const { weight_unit, measurement_unit, name } = useSettings();
   const [gh, setGh] = useState<GitHubStatus | null>(null);
+
+  // Google Health
+  const healthCount = useLiveQuery(() => db.biometrics.count(), []) ?? 0;
+  const healthDays = healthCount;
+  const [healthBusy, setHealthBusy] = useState(false);
+  const [healthMsg, setHealthMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    // Read the ?health= status from the OAuth redirect without useSearchParams
+    // (which would require a Suspense boundary and can fail the build).
+    if (typeof window === "undefined") return;
+    const h = new URLSearchParams(window.location.search).get("health");
+    if (!h) return;
+    if (h === "connected") {
+      setHealthMsg("Connected! Tap Sync now to pull your data.");
+    } else if (h === "reconnect" || h === "notoken") {
+      setHealthMsg("Connection expired — connect again.");
+    } else if (h === "config") {
+      setHealthMsg("Health integration isn't configured on the server yet.");
+    } else if (h === "error") {
+      setHealthMsg("Connection failed. Try connecting again.");
+    }
+  }, []);
+
+  const handleHealthSync = async () => {
+    setHealthBusy(true);
+    setHealthMsg(null);
+    const res = await syncGoogleHealth();
+    if (res.status === "synced") {
+      setHealthMsg(`Synced ${res.days ?? 0} day(s) of biometrics.`);
+    } else if (res.status === "reconnect") {
+      setHealthMsg("Your connection expired (weekly limit). Tap Connect Google Health again.");
+    } else if (res.status === "not_connected") {
+      setHealthMsg("Not connected yet. Tap Connect Google Health first.");
+    } else {
+      setHealthMsg(res.message ?? "Sync failed. Try again.");
+    }
+    setHealthBusy(false);
+  };
+
   const [sync, setSync] = useState<Status>({ kind: "idle" });
   const [io, setIo] = useState<Status>({ kind: "idle" });
   const [resetArmed, setResetArmed] = useState(false);
@@ -435,6 +477,39 @@ export default function SettingsPage() {
               </CardContent>
             </Card>
           </Link>
+        </section>
+
+        {/* Google Health */}
+        <section className="flex flex-col gap-3">
+          <p className="text-xs font-semibold text-[#9BA0A6] uppercase tracking-wider px-1">
+            Google Health (Fitbit)
+          </p>
+          <Card className="bg-[#121316] border-[#24262C]">
+            <CardContent className="p-4 flex flex-col gap-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Activity className="w-4 h-4 text-[#9BCBF2]" />
+                  <span className="text-sm font-medium">Sync biometrics</span>
+                </div>
+                <span className="text-xs font-bold" style={{ color: healthDays > 0 ? "#36D399" : "#5A5F66" }}>
+                  {healthDays > 0 ? `${healthDays} days` : "Not synced"}
+                </span>
+              </div>
+              <p className="text-[11px] text-[#5A5F66] leading-relaxed">
+                Connect your Fitbit data (HRV, resting HR, sleep, steps) to power a readiness score.
+                You&apos;ll reconnect about weekly — that&apos;s the free, no-audit path.
+              </p>
+              {healthMsg && <p className="text-xs text-[#9BA0A6]">{healthMsg}</p>}
+              <div className="flex gap-2">
+                <a href="/api/health/connect" className="flex-1">
+                  <Button variant="secondary" className="w-full">Connect Google Health</Button>
+                </a>
+                <Button onClick={handleHealthSync} disabled={healthBusy} className="flex-1">
+                  {healthBusy ? "Syncing…" : "Sync now"}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
         </section>
 
         {/* Units */}

@@ -86,6 +86,7 @@ export function AutoBackup() {
       db.stackLogs,
       db.stackCheckIns,
       db.labMarkers,
+      db.biometrics,
     ] as unknown as AnyTable[];
 
     const handler = () => onChange();

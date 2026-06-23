@@ -182,6 +182,26 @@ export interface Setting {
   value: string;
 }
 
+// ── Google Health biometrics (one row per day) ──
+// Pulled from the Google Health API. Raw sensor values; readiness is computed
+// locally from these (see lib/readiness.ts).
+export interface Biometrics {
+  date: string; // YYYY-MM-DD, primary key
+  hrv_ms: number | null; // daily HRV (RMSSD-style), ms
+  resting_hr: number | null; // bpm
+  sleep_minutes: number | null; // total sleep
+  sleep_deep_minutes: number | null;
+  sleep_rem_minutes: number | null;
+  spo2_pct: number | null;
+  respiratory_rate: number | null;
+  steps: number | null;
+  calories_out: number | null; // total calories burned
+  active_minutes: number | null;
+  readiness: number | null; // locally computed 0–100
+  source: string; // "google_health"
+  synced_at: string;
+}
+
 // ── Stack Monitor (supplements/peptides safety tracking) ──
 // Safety/monitoring only. The app stores user-entered dose text verbatim and
 // never originates doses, schedules, or titration for any compound.
@@ -252,6 +272,7 @@ export class PhysiqueDB extends Dexie {
   stackLogs!: Table<StackLog, string>;
   stackCheckIns!: Table<StackSafetyCheckIn, string>;
   labMarkers!: Table<LabMarker, string>;
+  biometrics!: Table<Biometrics, string>;
   settings!: Table<Setting, string>;
 
   constructor() {
@@ -342,6 +363,29 @@ export class PhysiqueDB extends Dexie {
       stackLogs: "id, stackItemId, date, [stackItemId+date]",
       stackCheckIns: "id, &date",
       labMarkers: "id, name, date",
+      settings: "key",
+    });
+
+    // v6 — Google Health biometrics (daily HRV/RHR/sleep/steps + readiness).
+    this.version(6).stores({
+      exercises: "id, category",
+      workoutTemplates: "id, is_active",
+      templateExercises: "id, template_id, [template_id+sort_order]",
+      workoutSessions: "id, started_at, completed_at",
+      exerciseLogs: "id, session_id, exercise_id, [session_id+created_at]",
+      dailyCheckins: "id, &date",
+      bodyweightLogs: "id, &date",
+      measurements: "id, &date",
+      progressPhotos: "id, date, pose",
+      supplements: "id, is_active, sort_order",
+      supplementLogs: "id, supplement_id, date, [supplement_id+date]",
+      fuelLogs: "id, &date",
+      dailyProtocols: "id, &date",
+      stackItems: "id, active, category",
+      stackLogs: "id, stackItemId, date, [stackItemId+date]",
+      stackCheckIns: "id, &date",
+      labMarkers: "id, name, date",
+      biometrics: "&date, synced_at",
       settings: "key",
     });
   }

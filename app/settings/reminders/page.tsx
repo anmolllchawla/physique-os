@@ -8,6 +8,7 @@ import {
   requestPermission,
   notificationsSupported,
   armReminders,
+  expandReminderTimes,
   type ReminderKey,
   type ReminderPref,
 } from "@/lib/reminders";
@@ -36,18 +37,24 @@ export default function RemindersPage() {
     isPushSubscribed().then(setBgOn);
   }, []);
 
+  // Build the flat schedule the server cron uses. Interval reminders (check-in)
+  // expand into one entry per fire-time so each fires at its own slot.
+  const buildSchedule = (p: Record<ReminderKey, ReminderPref>) =>
+    REMINDER_DEFS.flatMap((d) =>
+      expandReminderTimes(d.key, p[d.key].time).map((time, i) => ({
+        key: `${d.key}${i > 0 ? `_${i}` : ""}`,
+        label: d.label,
+        body: d.body,
+        time,
+        enabled: p[d.key].enabled,
+      }))
+    );
+
   // Mirror the reminder schedule to the server (for the cron job) whenever
   // background push is on.
   const pushSchedule = async (p: Record<ReminderKey, ReminderPref>) => {
     if (!bgOn) return;
-    const list = REMINDER_DEFS.map((d) => ({
-      key: d.key,
-      label: d.label,
-      body: d.body,
-      time: p[d.key].time,
-      enabled: p[d.key].enabled,
-    }));
-    await syncReminderSchedule(list);
+    await syncReminderSchedule(buildSchedule(p));
   };
 
   const update = async (key: ReminderKey, patch: Partial<ReminderPref>) => {
@@ -71,16 +78,7 @@ export default function RemindersPage() {
     const res = await subscribeToPush();
     if (res.ok) {
       setBgOn(true);
-      if (prefs) {
-        const list = REMINDER_DEFS.map((d) => ({
-          key: d.key,
-          label: d.label,
-          body: d.body,
-          time: prefs[d.key].time,
-          enabled: prefs[d.key].enabled,
-        }));
-        await syncReminderSchedule(list);
-      }
+      if (prefs) await syncReminderSchedule(buildSchedule(prefs));
       setBgMsg("Background notifications on. They'll fire even when the app is closed.");
     } else {
       setBgMsg(res.error ?? "Couldn't enable background notifications.");
