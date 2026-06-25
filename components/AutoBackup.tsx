@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { db } from "@/lib/db";
-import { buildSnapshot, pushToGitHub, githubStatus } from "@/lib/backup";
+import { buildSnapshot, pushToGitHub, githubStatus, pushPhotos } from "@/lib/backup";
 
 const DEBOUNCE_MS = 6000; // push ~6s after the last change
 
@@ -36,6 +36,8 @@ export function AutoBackup() {
       try {
         const snap = await buildSnapshot();
         const res = await pushToGitHub(snap);
+        // Photos sync as separate small files (kept out of the main snapshot).
+        await pushPhotos().catch(() => ({ pushed: 0, failed: 0 }));
         setStatus(res.ok ? "saved" : "error");
       } catch {
         setStatus("error");

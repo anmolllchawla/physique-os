@@ -8,9 +8,11 @@
 // GitHub writes happen through a serverless route (/api/github) so your token
 // never ships to the client bundle. See app/api/github/route.ts.
 
-import { db } from "./db";
+import { db, type ProgressPhoto } from "./db";
 import { encryptData, decryptData, isEncryptedBlob, type EncryptedBlob } from "./crypto";
 import { getSessionPassphrase, isVaultEnabled } from "./vault";
+
+type ProgressPhotoRow = ProgressPhoto;
 
 export const SNAPSHOT_VERSION = 2;
 
@@ -90,6 +92,20 @@ export async function buildSnapshot(): Promise<Snapshot> {
   // it can't be reversed to the PIN. We still never store the plaintext.
   const safeSettings = allSettings as { key: string }[];
 
+  // Photos are large (base64). Keep only lightweight METADATA in the main
+  // snapshot; the image bytes (data_url) live in per-photo files synced
+  // separately (see pushPhotos / pullPhotos). This keeps the main backup
+  // request well under Vercel's body limit.
+  const progressPhotosMeta = (progressPhotos as ProgressPhotoRow[]).map((p) => ({
+    id: p.id,
+    date: p.date,
+    pose: p.pose,
+    weight_lbs: p.weight_lbs,
+    notes: p.notes,
+    created_at: p.created_at,
+    // data_url intentionally omitted
+  }));
+
   return {
     app: "physiqueos",
     schema_version: SNAPSHOT_VERSION,
@@ -103,7 +119,7 @@ export async function buildSnapshot(): Promise<Snapshot> {
       dailyCheckins,
       bodyweightLogs,
       measurements,
-      progressPhotos,
+      progressPhotos: progressPhotosMeta,
       supplements,
       supplementLogs,
       fuelLogs,
@@ -157,7 +173,8 @@ export async function restoreSnapshot(snap: Snapshot, mode: "replace" | "merge" 
           db.dailyCheckins.clear(),
           db.bodyweightLogs.clear(),
           db.measurements.clear(),
-          db.progressPhotos.clear(),
+          // progressPhotos intentionally NOT cleared — image bytes live in
+          // per-photo files pulled separately; clearing would lose them.
           db.supplements.clear(),
           db.supplementLogs.clear(),
           db.fuelLogs.clear(),
@@ -178,7 +195,18 @@ export async function restoreSnapshot(snap: Snapshot, mode: "replace" | "merge" 
       await db.dailyCheckins.bulkPut((d.dailyCheckins ?? []) as never[]);
       await db.bodyweightLogs.bulkPut((d.bodyweightLogs ?? []) as never[]);
       await db.measurements.bulkPut((d.measurements ?? []) as never[]);
-      await db.progressPhotos.bulkPut((d.progressPhotos ?? []) as never[]);
+      // Merge photo metadata onto existing rows, preserving any local data_url
+      // (full images are restored separately via pullPhotos).
+      {
+        const metaPhotos = (d.progressPhotos ?? []) as ProgressPhotoRow[];
+        for (const meta of metaPhotos) {
+          const existing = await db.progressPhotos.get(meta.id);
+          await db.progressPhotos.put({
+            ...meta,
+            data_url: existing?.data_url ?? (meta as ProgressPhotoRow).data_url ?? "",
+          } as never);
+        }
+      }
       await db.supplements.bulkPut((d.supplements ?? []) as never[]);
       await db.supplementLogs.bulkPut((d.supplementLogs ?? []) as never[]);
       await db.fuelLogs.bulkPut((d.fuelLogs ?? []) as never[]);
@@ -287,5 +315,62 @@ export async function getCloudState(): Promise<CloudState> {
     return { kind: "plaintext", snapshot: raw as Snapshot };
   } catch (e) {
     return { kind: "error", message: e instanceof Error ? e.message : "Network error" };
+  }
+}
+
+// ── Per-photo sync (keeps the main backup small) ──────────────────────────
+// Photos are stored one-file-per-photo in GitHub. These run alongside the main
+// backup so a photo's large image bytes never bloat the main snapshot request.
+
+// Push photos that have image data to GitHub, one small request each.
+export async function pushPhotos(): Promise<{ pushed: number; failed: number }> {
+  const photos = await db.progressPhotos.toArray();
+  let pushed = 0;
+  let failed = 0;
+  for (const p of photos) {
+    if (!p.data_url) continue; // nothing to store
+    try {
+      const res = await fetch("/api/github/photo", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ photo: p }),
+      });
+      if (res.ok) pushed++;
+      else failed++;
+    } catch {
+      failed++;
+    }
+  }
+  return { pushed, failed };
+}
+
+// Pull any photos whose local copy is missing image bytes (e.g. just restored
+// metadata on a fresh device). Fetches each photo file individually.
+export async function pullPhotos(): Promise<{ pulled: number }> {
+  const local = await db.progressPhotos.toArray();
+  const needing = local.filter((p) => !p.data_url);
+  let pulled = 0;
+  for (const p of needing) {
+    try {
+      const res = await fetch(`/api/github/photo?id=${encodeURIComponent(p.id)}`);
+      if (!res.ok) continue;
+      const { photo } = (await res.json()) as { photo: ProgressPhotoRow | null };
+      if (photo?.data_url) {
+        await db.progressPhotos.put(photo as never);
+        pulled++;
+      }
+    } catch {
+      /* skip */
+    }
+  }
+  return { pulled };
+}
+
+// Delete a photo from GitHub (call when the user deletes a photo locally).
+export async function deletePhotoRemote(id: string): Promise<void> {
+  try {
+    await fetch(`/api/github/photo?id=${encodeURIComponent(id)}`, { method: "DELETE" });
+  } catch {
+    /* best effort */
   }
 }

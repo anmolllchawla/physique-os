@@ -38,7 +38,7 @@ function exportDate(date: string, items: ProgressPhoto[]) {
 
 // Downscale an image file to a JPEG data URL (max 1080px long edge) so photos
 // stay small enough for IndexedDB and the GitHub JSON backup.
-async function fileToDataUrl(file: File, maxEdge = 1080, quality = 0.82): Promise<string> {
+async function fileToDataUrl(file: File, maxEdge = 960, quality = 0.78): Promise<string> {
   const bitmap = await createImageBitmap(file);
   const scale = Math.min(1, maxEdge / Math.max(bitmap.width, bitmap.height));
   const w = Math.round(bitmap.width * scale);
@@ -91,6 +91,8 @@ export default function PhotosPage() {
 
   const handleDelete = async (id: string) => {
     await db.progressPhotos.delete(id);
+    // Remove the separate remote photo file too (best-effort).
+    import("@/lib/backup").then((m) => m.deletePhotoRemote(id)).catch(() => {});
     setViewer(null);
   };
 

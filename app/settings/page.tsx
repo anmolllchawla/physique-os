@@ -12,6 +12,7 @@ import {
   githubStatus,
   pushToGitHub,
   pullFromGitHub,
+  pullPhotos,
   getCloudState,
   type Snapshot,
   type GitHubStatus,
@@ -273,6 +274,7 @@ export default function SettingsPage() {
         return;
       }
       await restoreSnapshot(snap, "replace");
+      await pullPhotos().catch(() => ({ pulled: 0 }));
       setSync({ kind: "ok", msg: "Restored from GitHub." });
     } catch (e) {
       setSync({ kind: "err", msg: e instanceof Error ? e.message : "Pull failed." });

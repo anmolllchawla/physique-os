@@ -142,7 +142,9 @@ export async function PUT(req: NextRequest) {
 
   try {
     const existing = await getExisting(token, repo, path, branch);
-    const content = Buffer.from(JSON.stringify(body.snapshot, null, 2), "utf-8").toString("base64");
+    // Compact JSON (no indentation) — the backup is machine-read only, and
+    // pretty-printing bloats a photo-heavy payload past Vercel's body limit.
+    const content = Buffer.from(JSON.stringify(body.snapshot), "utf-8").toString("base64");
 
     const res = await fetch(`${API}/repos/${repo}/contents/${encodeURIComponent(path)}`, {
       method: "PUT",

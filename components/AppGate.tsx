@@ -6,6 +6,7 @@ import { setSessionPassphrase, markActive, markVaultEnabled } from "@/lib/vault"
 import {
   getCloudState,
   restoreSnapshot,
+  pullPhotos,
   type Snapshot,
 } from "@/lib/backup";
 import { decryptData, WrongPassphraseError, type EncryptedBlob } from "@/lib/crypto";
@@ -89,6 +90,8 @@ function PassphraseScreen({ blob, onUnlock }: { blob: EncryptedBlob; onUnlock: (
       await markVaultEnabled();
       // Always load the decrypted cloud copy so every device shows current data.
       await restoreSnapshot(snap, "replace");
+      // Full photo images live in separate files — fetch them after restore.
+      await pullPhotos().catch(() => ({ pulled: 0 }));
       onUnlock();
     } catch {
       setError("Something went wrong. Try again.");
