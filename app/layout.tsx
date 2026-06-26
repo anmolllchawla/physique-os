@@ -34,8 +34,12 @@ export const metadata: Metadata = {
     title: "PhysiqueOS",
   },
   icons: {
-    icon: "/icon-192.png",
-    apple: "/icon-192.png",
+    icon: [
+      { url: "/favicon.png", sizes: "32x32", type: "image/png" },
+      { url: "/icon-192.png", sizes: "192x192", type: "image/png" },
+      { url: "/icon-512.png", sizes: "512x512", type: "image/png" },
+    ],
+    apple: "/apple-touch-icon.png",
   },
 };
 
@@ -54,7 +58,8 @@ export default function RootLayout({
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
         <meta name="apple-mobile-web-app-title" content="PhysiqueOS" />
-        <link rel="apple-touch-icon" href="/icon-192.png" />
+        <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+        <link rel="icon" href="/favicon.png" type="image/png" />
       </head>
       <body className="min-h-full bg-[#08090A] text-[#F2F4F3]">
         <ServiceWorkerRegistrar />

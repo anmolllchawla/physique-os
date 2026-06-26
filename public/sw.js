@@ -1,7 +1,7 @@
 // PhysiqueOS — Service Worker
 // Cache-first for static assets, network-first for pages.
 
-const CACHE_NAME = "physiqueos-v3";
+const CACHE_NAME = "physiqueos-v4";
 
 const STATIC_ASSETS = [
   "/",
